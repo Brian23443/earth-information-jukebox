@@ -1,0 +1,7 @@
+numpy>=1.26
+Pillow>=10.0
+scikit-image>=0.22
+# Only needed for forest height (GEDI GeoTIFF)
+rasterio>=1.3
+certifi>=2024.0
+scipy>=1.11  # aerosol colour unmixing (pipeline/aerosols.py)

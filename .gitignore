@@ -1,0 +1,19 @@
+# Raw NASA downloads and intermediate files (large, re-creatable)
+data/raw/
+data/work/
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# Node / Vite
+web/node_modules/
+web/dist/
+
+# Everything the pipeline generates for the site (~1 GB: videos, stills, grids, summaries).
+# Regenerate with the pipeline (see README); the built site is published to the
+# gh-pages branch by scripts/deploy.sh, not stored on main.
+web/public/data/
+
+.DS_Store
