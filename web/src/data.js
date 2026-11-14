@@ -121,8 +121,8 @@ export class GridCache {
 
 // events.bin: 9-byte records (uint16 x, y, start, end; uint8 radius*10), little-endian.
 // Unpacked into typed arrays the globe hands straight to the GPU.
-async function loadEvents(dir) {
-  const meta = await fetchJson(`${dir}/events.json`).catch(() => null);
+async function loadEvents(dir, optional) {
+  const meta = await optional('events.json');
   if (!meta) return null;
   const buf = await (await fetch(`${dir}/events.bin`)).arrayBuffer();
   const dv = new DataView(buf);
@@ -144,13 +144,26 @@ async function loadEvents(dir) {
 
 // Returns both playback videos when present: videoUrl (2048, everyone starts here) and
 // videoUrlHigh (4096, swapped in by main.js only on large screens with fast connections).
+// Production builds ship data/index.json (web/vite.config.js) listing each dataset's files,
+// so optional files are looked up there instead of probed: no 404s in the console. In dev
+// there is no index, and we fall back to probing.
+let dataIndex;
+async function getDataIndex() {
+  if (dataIndex === undefined) dataIndex = await fetchJson(`${BASE}/index.json`).catch(() => null);
+  return dataIndex;
+}
+
 export async function loadDataset(ds) {
   const dir = `${BASE}/${ds.id}`;
+  const index = await getDataIndex();
+  const listing = index ? index.datasets[ds.id]?.files ?? null : undefined;
+  if (listing === null) return ds.demoFallback ? makeDemo(ds) : null; // not in this build
+  // has(name): size in bytes (truthy) or false; optional(name): parsed JSON or null.
+  const has = (name) => (listing ? listing[name] ?? false : exists(`${dir}/${name}`));
+  const optional = (name) =>
+    listing && !(name in listing) ? Promise.resolve(null) : fetchJson(`${dir}/${name}`).catch(() => null);
   try {
-    const [meta, frames] = await Promise.all([
-      fetchJson(`${dir}/summary.json`),
-      fetchJson(`${dir}/frames.json`).catch(() => null),
-    ]);
+    const [meta, frames] = await Promise.all([fetchJson(`${dir}/summary.json`), optional('frames.json')]);
     const buf = await (await fetch(`${dir}/summary.bin`)).arrayBuffer();
     const summary = new Summary(meta, new Uint8Array(buf));
     // Aerosols: per-cell amount of each type, [frames][bands][cols][types] (pipeline/aerosols.py).
@@ -158,21 +171,19 @@ export async function loadDataset(ds) {
       summary.classes = new Uint8Array(await (await fetch(`${dir}/classes.bin`)).arrayBuffer());
       summary.classNames = meta.classes;
     }
-    const [has2048, has4096, has6840] = await Promise.all([
-      exists(`${dir}/web.mp4`), exists(`${dir}/web4096.mp4`), exists(`${dir}/web6840.mp4`),
-    ]);
+    const [has2048, has4096, has6840] = await Promise.all([has('web.mp4'), has('web4096.mp4'), has('web6840.mp4')]);
     const videoUrlHigh = has4096 ? `${dir}/web4096.mp4` : null;
     // Full-resolution HEVC, only used with ?video=6840 (demo recording on a capable Mac).
     const videoUrlMax = has6840 ? `${dir}/web6840.mp4` : null;
     const videoUrl = has2048 ? `${dir}/web.mp4` : videoUrlHigh;
     const grids = meta.grids ? new GridCache(dir, meta) : null;
-    const hires = await fetchJson(`${dir}/hires.json`).catch(() => null);
+    const hires = await optional('hires.json');
     // From pipeline/landlayer.py: sharp static land + per-video color correction.
-    const colorFix = await fetchJson(`${dir}/colorfix.json`).catch(() => null);
-    const land = (await exists(`${dir}/land.jpg`)) ? { image: `${dir}/land.jpg`, mask: `${dir}/landmask.png` } : null;
+    const colorFix = await optional('colorfix.json');
+    const land = (await has('land.jpg')) ? { image: `${dir}/land.jpg`, mask: `${dir}/landmask.png` } : null;
     if (hires) hires.dir = `${dir}/hires`;
     // Vector events (lightning, from pipeline/events.py) + their static base map.
-    const events = await loadEvents(dir);
+    const events = await loadEvents(dir, optional);
     // Byte size of the starting video lets main.js turn buffering speed into Mbps.
     const videoBytes = typeof (has2048 || has4096) === 'number' ? (has2048 || has4096) : null;
     return { ds, summary, frames, videoUrl, videoUrlHigh, videoUrlMax, videoBytes, events, grids, hires, colorFix, land, demo: false };
