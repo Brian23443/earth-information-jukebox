@@ -39,6 +39,8 @@ function writeDebug(f) {
     ctx: sound.state,
     frame: +frame.toFixed(1),
     zoom: +globe.zoomFactor.toFixed(2),
+    spinDeg: +(globe.spin * 180 / Math.PI).toFixed(2),
+    keySpinVelDeg: +(globe.keySpinVel * 180 / Math.PI).toFixed(1),
     maxZoom: +globe.maxZoom.toFixed(2),
     detailWidth: globe.detailWidth,
     canvasH: globe.renderer.domElement.height,
@@ -579,6 +581,7 @@ function tick(now) {
       }
       sound.update(features, featureClock);
       // Keyboard users: the crosshair plays for a few seconds after they move the globe.
+      if (globe.keyMoving) keyboardMovedAt = now; // still turning (held key or coasting)
       if (!hover && document.activeElement === $('globe') && now - keyboardMovedAt < 3000) {
         playCursor(globe.center());
       }

@@ -15,6 +15,14 @@ const NEAR = 1.18;         // closest zoom ever (0.18 globe radii above the surf
 // stills start to soften, but deeper zoom is worth it for exploring; at 4x it's blurry.
 const MIN_TEXELS_PER_PX = 0.25;
 const MAX_SPIN_VEL = 4;    // rad/s cap on fling speed
+// Arrow keys: held keys accelerate to a steady speed, release coasts to a stop.
+// (Speeds shrink with zoom so keyboard users can make fine moves when zoomed in.)
+const KEY_SPIN_MAX = 80 * DEG;    // rad/s at full speed, zoomed out
+const KEY_TILT_MAX = 40 * DEG;
+const KEY_ACCEL_TIME = 0.45;      // s from rest to full speed
+const KEY_DECEL_TIME = 0.35;      // s from full speed to rest after release
+const KEY_TAP_KICK = 0.45;        // share of full speed a fresh press starts at (taps still move ~3-4°)
+const ARROWS = new Set(['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown']);
 const VEL_WINDOW_MS = 100; // release velocity = average over the last 100 ms of drag
 
 export function latLonToLocal(lat, lon, out = new THREE.Vector3()) {
@@ -290,6 +298,7 @@ uniform vec4 cf2;`,
 
   update(dt) {
     this.idleFor += dt;
+    this._stepKeys(dt);
     if (!this.dragging) {
       this.spin += this.spinVel * dt;
       this.spinVel *= Math.pow(0.08, dt); // momentum decays smoothly
@@ -432,25 +441,56 @@ uniform vec4 cf2;`,
 
   _bindKeys() {
     // The container has role="application" + tabindex="0", so screen readers pass keys through.
+    // Shift is reserved for "read the value aloud" (see main.js), so no Shift modifier here.
+    this.keysHeld = new Set();
+    this.keySpinVel = 0; // rad/s
+    this.keyTiltVel = 0;
     this.container.addEventListener('keydown', (e) => {
-      // Shift is reserved for "read the value aloud" (see main.js), so no Shift modifier here.
-      // Steps shrink as you zoom in so keyboard users can make fine moves.
-      const step = (10 * DEG) / Math.sqrt(this.zoomFactor);
-      const keys = {
-        ArrowLeft: () => this.spinBy(step),
-        ArrowRight: () => this.spinBy(-step),
-        ArrowUp: () => this.tiltBy(step / 2),
-        ArrowDown: () => this.tiltBy(-step / 2),
-        '+': () => this.zoomBy(1.5),
-        '=': () => this.zoomBy(1.5),
-        '-': () => this.zoomBy(1 / 1.5),
-        _: () => this.zoomBy(1 / 1.5),
-      };
-      if (keys[e.key]) {
+      if (ARROWS.has(e.key)) {
+        e.preventDefault();
+        if (!e.repeat && !this.keysHeld.has(e.key)) {
+          this.keysHeld.add(e.key);
+          this.spinVel = 0; // cancel any drag momentum
+          // Fresh press: start partway to full speed so a quick tap still moves.
+          const z = Math.sqrt(this.zoomFactor);
+          if (e.key === 'ArrowLeft') this.keySpinVel = Math.max(this.keySpinVel, (KEY_TAP_KICK * KEY_SPIN_MAX) / z);
+          if (e.key === 'ArrowRight') this.keySpinVel = Math.min(this.keySpinVel, (-KEY_TAP_KICK * KEY_SPIN_MAX) / z);
+          if (e.key === 'ArrowUp') this.keyTiltVel = Math.max(this.keyTiltVel, (KEY_TAP_KICK * KEY_TILT_MAX) / z);
+          if (e.key === 'ArrowDown') this.keyTiltVel = Math.min(this.keyTiltVel, (-KEY_TAP_KICK * KEY_TILT_MAX) / z);
+        }
+        this.idleFor = 0;
+        return;
+      }
+      const zoomKeys = { '+': 1.5, '=': 1.5, '-': 1 / 1.5, _: 1 / 1.5 };
+      if (zoomKeys[e.key]) {
         e.preventDefault();
         this.spinVel = 0;
-        keys[e.key]();
+        this.zoomBy(zoomKeys[e.key]);
       }
     });
+    this.container.addEventListener('keyup', (e) => this.keysHeld.delete(e.key));
+    // Losing focus mid-press never sends keyup: stop instead of spinning forever.
+    this.container.addEventListener('blur', () => this.keysHeld.clear());
+  }
+
+  // Ease keyboard velocity toward its target: linear ramps (constant acceleration) feel
+  // smoother than jumps, and coasting on release avoids a hard stop.
+  _stepKeys(dt) {
+    const z = Math.sqrt(this.zoomFactor);
+    const held = (k) => (this.keysHeld.has(k) ? 1 : 0);
+    const ramp = (vel, dir, max) => {
+      const target = dir * max;
+      const rate = (dir !== 0 ? max / KEY_ACCEL_TIME : max / KEY_DECEL_TIME) * dt;
+      if (Math.abs(target - vel) <= rate) return target;
+      return vel + Math.sign(target - vel) * rate;
+    };
+    this.keySpinVel = ramp(this.keySpinVel, held('ArrowLeft') - held('ArrowRight'), KEY_SPIN_MAX / z);
+    this.keyTiltVel = ramp(this.keyTiltVel, held('ArrowUp') - held('ArrowDown'), KEY_TILT_MAX / z);
+    if (this.keySpinVel) { this.spin += this.keySpinVel * dt; this.idleFor = 0; }
+    if (this.keyTiltVel) this.tiltBy(this.keyTiltVel * dt);
+  }
+
+  get keyMoving() {
+    return this.keysHeld.size > 0 || this.keySpinVel !== 0 || this.keyTiltVel !== 0;
   }
 }
