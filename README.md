@@ -205,7 +205,8 @@ Measured before: switching to Lightning blocked the page for ~600 ms (parsing 1.
 - **Loaded once per visit** (`data.js` caches each dataset); lightning's dots are parsed and placed in a worker (`events-worker.js`), and their GPU buffers are built once and kept.
 - **Preloaded** after the app starts, one piece at a time: the other datasets' data, dot buffers, night map and land layers are decoded off the main thread and uploaded to the GPU, and the first seconds of each video are fetched.
 - **Lightning's night map** shows the 4096 version first (0.4 MB); the 8192 one loads only when someone zooms in past 1.4×.
-- **No blank frames:** the old dataset stays on the globe (paused on its last frame) until the new one's first picture is decoded, then the new one sweeps across from left to right in 0.8 s; lightning dots fade in and out. With reduced motion, it switches at once.
+- **No blank frames:** the old dataset stays on the globe (paused on its last frame) until the new one's first picture is decoded, then the new one replaces it with a transition; lightning dots fade in and out. With reduced motion, it switches at once.
+- **Transitions** (`?swap=` to try each): `bloom` (default, 1.3 s): a blue glow ignites at the centre of the view and spreads over the planet with a ragged, glitching front, tinting and speckling the old data ahead of it while the blue drains out of the new data behind. `scan` (1.2 s): a bright line passes pole to pole like a satellite pass. `dissolve` (1.1 s): the old data breaks up in an organic pattern with glowing edges. `sweep` (0.8 s): left to right.
 - **Video quality:** once a visit has upgraded to 4096, later switches start on 4096 directly instead of 2048 then 4096.
 
 Result (M1 Pro, Chrome): no main-thread tasks over 50 ms on any switch, after preloading or before it (switching to Lightning right after start: map on screen in 212 ms).

@@ -27,6 +27,14 @@ const KEY_TAP_KICK = 0.45;        // share of full speed a fresh press starts at
 const ARROWS = new Set(['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown']);
 const VEL_WINDOW_MS = 100; // release velocity = average over the last 100 ms of drag
 
+// Dataset-switch transitions (globe.swapStyle; ?swap=sweep|bloom|scan|dissolve to try them).
+export const SWAP_STYLES = {
+  sweep: { id: 0, seconds: 0.8, ease: false },
+  bloom: { id: 1, seconds: 1.3, ease: true },
+  scan: { id: 2, seconds: 1.2, ease: true },
+  dissolve: { id: 3, seconds: 1.1, ease: true },
+};
+
 const EVENT_AFTERGLOW = 8; // summary frames a finished flash keeps fading (~0.5 s at 1x)
 
 // First index in a sorted array whose value is >= x.
@@ -80,6 +88,7 @@ export class Globe {
     this.pivot.add(this.sphere);
     this.scene.add(this.pivot);
     this.cover = null;
+    this.swapStyle = 'bloom';
     this.eventSets = new Set(); // lightning dot buffers, kept between switches
     this.eventPoints = null;
     this.atmosphere = this._makeAtmosphere();
@@ -362,12 +371,13 @@ export class Globe {
       swapOn: { value: 0 },
       swapPrevVideo: { value: 0 }, // video textures hold sRGB values (decoded in the shader)
       swapT: { value: 1 },
+      swapStyle: { value: 1 },
     };
     this.material.onBeforeCompile = (shader) => {
       Object.assign(shader.uniforms, this.uniforms);
       shader.vertexShader = shader.vertexShader
-        .replace('#include <common>', '#include <common>\nvarying vec3 vViewN;')
-        .replace('#include <fog_vertex>', 'vViewN = normalize(normalMatrix * normal);\n#include <fog_vertex>');
+        .replace('#include <common>', '#include <common>\nvarying vec3 vViewN;\nvarying vec3 vObjPos;')
+        .replace('#include <fog_vertex>', 'vViewN = normalize(normalMatrix * normal);\nvObjPos = position;\n#include <fog_vertex>');
       shader.fragmentShader = shader.fragmentShader
         .replace(
           '#include <common>',
@@ -390,7 +400,17 @@ uniform sampler2D swapPrev;
 uniform float swapOn;
 uniform float swapPrevVideo;
 uniform float swapT;
+uniform float swapStyle; // 0 sweep, 1 corruption bloom, 2 satellite scan, 3 dissolve
 varying vec3 vViewN;
+varying vec3 vObjPos; // point on the unit globe, turns with it (noise sticks to the land)
+
+float gHash(vec3 p) { p = fract(p * 0.3183099 + 0.1); p *= 17.0; return fract(p.x * p.y * p.z * (p.x + p.y + p.z)); }
+float gNoise(vec3 x) {
+  vec3 i = floor(x), f = fract(x); f = f * f * (3.0 - 2.0 * f);
+  return mix(mix(mix(gHash(i), gHash(i + vec3(1,0,0)), f.x), mix(gHash(i + vec3(0,1,0)), gHash(i + vec3(1,1,0)), f.x), f.y),
+             mix(mix(gHash(i + vec3(0,0,1)), gHash(i + vec3(1,0,1)), f.x), mix(gHash(i + vec3(0,1,1)), gHash(i + vec3(1,1,1)), f.x), f.y), f.z);
+}
+float gFbm(vec3 p) { float s = 0.0, a = 0.5; for (int i = 0; i < 4; i++) { s += a * gNoise(p); p *= 2.07; a *= 0.5; } return s; }
 
 // Catmull-Rom bicubic in 9 bilinear taps. Only used where one texel covers more than a
 // screen pixel: there, plain bilinear shows soft blocks; zoomed out it would just cost time
@@ -458,14 +478,57 @@ vec4 sampleSmooth(sampler2D tex, vec2 uv) {
   }
   float showNew = 1.0; // share of the new dataset here (below 1 only during a swap)
   if (swapOn > 0.5) {
-    // The new dataset sweeps across the globe from left to right, with a faint edge line.
     vec4 prev = sampleSmooth(swapPrev, vMapUv);
     if (swapPrevVideo > 0.5) prev = sRGBTransferEOTF(prev);
-    float xs = normalize(vViewN).x;
-    float edge = mix(-1.45, 1.45, swapT);
-    showNew = 1.0 - smoothstep(edge - 0.3, edge + 0.3, xs);
-    float line = exp(-pow((xs - edge) / 0.06, 2.0)) * (1.0 - swapT);
-    diffuseColor.rgb = mix(prev.rgb, diffuseColor.rgb, showNew) + vec3(0.35, 0.65, 1.0) * line * 0.25;
+    vec3 n = normalize(vViewN);
+    vec3 blue = vec3(0.3, 0.62, 1.0);
+    vec3 col;
+    float t = swapT;
+    float fadeOut = 1.0 - smoothstep(0.85, 1.0, t); // effects gone by the end
+    if (swapStyle < 0.5) {
+      // Sweep: left to right, faint edge line.
+      float edge = mix(-1.45, 1.45, t);
+      showNew = 1.0 - smoothstep(edge - 0.3, edge + 0.3, n.x);
+      col = mix(prev.rgb, diffuseColor.rgb, showNew) + blue * exp(-pow((n.x - edge) / 0.06, 2.0)) * 0.25 * fadeOut;
+    } else if (swapStyle < 1.5) {
+      // Corruption bloom: a blue glow ignites at the centre of the view and spreads over the
+      // planet with a ragged, glitching front; old data just ahead of it is tinted and
+      // speckled, and the blue drains out of the new data behind it.
+      vec3 o = normalize(vObjPos);
+      float d = acos(clamp(n.z, -1.0, 1.0)); // 0 at the centre of the view, 1.57 at the edge
+      float rag = (gFbm(o * 4.0) - 0.5) * 0.55 + (gNoise(o * 38.0) - 0.5) * 0.12;
+      float dn = d + rag;
+      float R = mix(-0.35, 2.15, t);
+      showNew = 1.0 - smoothstep(R - 0.06, R + 0.06, dn);
+      float front = exp(-pow((dn - R) / 0.06, 2.0));
+      float ahead = (1.0 - smoothstep(R, R + 0.4, dn)) * (1.0 - showNew);
+      float speck = step(0.82, gHash(floor(o * 90.0) + floor(t * 24.0))) * ahead;
+      float wash = (1.0 - smoothstep(0.0, 0.8, R - dn)) * showNew;
+      col = mix(prev.rgb, diffuseColor.rgb, showNew);
+      vec3 tinted = col * vec3(0.45, 0.7, 1.35) + vec3(0.0, 0.03, 0.12);
+      col = mix(col, tinted, clamp(ahead * 0.55 + wash * 0.45, 0.0, 1.0) * fadeOut);
+      col += blue * (front * 0.85 + speck * 0.45) * fadeOut;
+    } else if (swapStyle < 2.5) {
+      // Satellite scan: a bright line passes from the north pole to the south, laying the
+      // new data down behind it, with a short afterglow.
+      float y = normalize(vObjPos).y; // sin(latitude)
+      float edge = mix(1.12, -1.12, t);
+      showNew = smoothstep(edge - 0.015, edge + 0.015, y);
+      float line = exp(-pow((y - edge) / 0.012, 2.0));
+      float trail = exp(-max(y - edge, 0.0) / 0.09) * showNew;
+      col = mix(prev.rgb, diffuseColor.rgb, showNew);
+      col = mix(col, col * vec3(0.6, 0.85, 1.3), trail * 0.5 * fadeOut);
+      col += blue * (line * 1.2 + trail * 0.12) * fadeOut;
+    } else {
+      // Dissolve: the old data breaks up in an organic pattern with glowing edges.
+      float nz = gFbm(normalize(vObjPos) * 3.2);
+      float thr = mix(0.12, 0.9, t) ;
+      showNew = 1.0 - smoothstep(thr - 0.02, thr + 0.02, nz);
+      if (t >= 1.0) showNew = 1.0;
+      float rim = exp(-pow((nz - thr) / 0.014, 2.0));
+      col = mix(prev.rgb, diffuseColor.rgb, showNew) + blue * rim * 0.6 * fadeOut;
+    }
+    diffuseColor.rgb = col;
   }
   // Land layer: on the parts of the globe showing a dataset that uses it, so it sweeps in
   // (or out) with that dataset instead of jumping.
@@ -491,7 +554,7 @@ vec4 sampleSmooth(sampler2D tex, vec2 uv) {
 #endif`,
         );
     };
-    this.material.customProgramCacheKey = () => 'globe-land-colorfix-bicubic-cover-swap-v7';
+    this.material.customProgramCacheKey = () => 'globe-land-colorfix-bicubic-cover-swap-v8';
   }
 
   spinBy(rad) {
@@ -557,14 +620,19 @@ vec4 sampleSmooth(sampler2D tex, vec2 uv) {
     u.landPrevOn.value = u.landOn.value; // still the outgoing dataset's: callers set the new land after
     u.swapOn.value = 1;
     u.swapT.value = 0;
+    u.swapStyle.value = SWAP_STYLES[this.swapStyle]?.id ?? 1;
+    this._swapRaw = 0;
     this._swapDone = done ?? (() => {});
   }
 
   _stepSwap(dt) {
     const u = this.uniforms;
     if (!u.swapOn.value) return;
-    u.swapT.value = Math.min(1, u.swapT.value + dt / 0.8);
-    if (u.swapT.value >= 1) {
+    const style = SWAP_STYLES[this.swapStyle] ?? SWAP_STYLES.bloom;
+    this._swapRaw = Math.min(1, this._swapRaw + dt / style.seconds);
+    const x = this._swapRaw;
+    u.swapT.value = style.ease ? 0.5 - 0.5 * Math.cos(Math.PI * x) : x;
+    if (x >= 1) {
       u.swapOn.value = 0;
       u.landPrevOn.value = 0;
       const done = this._swapDone;

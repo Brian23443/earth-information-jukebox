@@ -75,6 +75,7 @@ function writeDebug(f) {
 // button starts audio, then the same globe glides into the app view while the data sweeps
 // across it (globe.leaveCover).
 globe = new Globe($('globe'), { reducedMotion });
+globe.swapStyle = new URLSearchParams(location.search).get('swap') ?? 'bloom'; // ?swap= tries the other dataset transitions
 if (import.meta.env.DEV) window.__globe = globe; // for side-by-side checks in the browser
 {
   const blank = new THREE.DataTexture(new Uint8Array([4, 6, 12, 255]), 1, 1);
