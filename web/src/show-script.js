@@ -10,12 +10,14 @@ export const SHOW_SCRIPT = [
   // Pauses are moments to just listen.
 
   // ---------- Intro ----------
-  { dataset: 'sst', seek: 0.36, speed: 1, play: true, focus: ['pad'], fly: { lat: 20, lon: -40, zoom: 1, seconds: 2 }, wait: false },
+  // Seeks happen only on a dataset change (the transition covers them); within a scene
+  // the timeline just plays, or glides to a checked moment (reach).
+  { dataset: 'sst', seek: 0.16, speed: 0.5, play: true, focus: ['pad'], fly: { lat: 20, lon: -40, zoom: 1, seconds: 2 }, wait: false },
   { say: 'intro-1', text: 'Welcome to the Earth Information Jukebox. Everything you are about to hear is real NASA data about our planet, turned into sound.' },
   { say: 'intro-2', text: 'We will learn the sounds one at a time. Then the planet is yours to explore, with or without sight.' },
 
   // ---------- Ocean temperature ----------
-  { seek: 0.33, speed: 0.5, say: 'ocean-1', text: 'First, the ocean. This slow chord is the average temperature of the sea surface facing you. Warmer water makes it higher and brighter.' },
+  { say: 'ocean-1', text: 'First, the ocean. This slow chord is the average temperature of the sea surface facing you. Warmer water makes it higher and brighter.' },
   { pause: 1.5 },
 
   // The temperature tone, pole to pole along the Pacific (160° W): its pitch is the sea
@@ -30,7 +32,8 @@ export const SHOW_SCRIPT = [
   { fly: { lat: -70, lon: -160, zoom: 1.5, seconds: 9 } },
   { pause: 2 },
   { probe: false },
-  { focus: ['melody'], speed: 1, fly: { lat: 10, lon: -150, zoom: 1, seconds: 2 }, wait: false },
+  // (Still half speed: at 1x the ocean data runs past its last day here and loops back.)
+  { focus: ['melody'], fly: { lat: 10, lon: -150, zoom: 1, seconds: 2 }, wait: false },
   { say: 'ocean-4', text: 'Now the melody. Four notes play from left to right, one for each slice of the globe in front of you. A higher note means warmer water in that slice.' },
   { pause: 2.5 },
   { focus: null, pause: 3 },
@@ -38,13 +41,13 @@ export const SHOW_SCRIPT = [
   // ---------- Lightning ----------
   // Checked: over Africa activity is ~1 or more around 30-35% (busy drums); over the open
   // Pacific it dips to 0.11-0.16 only around 35-37% (the drums stop below 0.12), so the
-  // show jumps there as the camera arrives and plays at quarter speed through the line.
-  { dataset: 'lightning', seek: 0.3, speed: 0.5, play: true, focus: ['drums'], fly: { lat: 0, lon: 20, zoom: 1.3, seconds: 3 }, wait: false },
+  // timeline glides there during the flight and plays at quarter speed through the line.
+  { dataset: 'lightning', seek: 0.19, speed: 0.5, play: true, focus: ['drums'], fly: { lat: 0, lon: 20, zoom: 1.3, seconds: 3 }, wait: false },
   { say: 'storm-1', text: 'Next, lightning, seen by a camera on the International Space Station. Every drum hit is a burst of new lightning on the side of Earth facing you.' },
   { say: 'storm-2', text: 'The busier the storms, the busier the drums. Storms farther north sound higher, and storms on your left play in your left ear.' },
   { pause: 2 },
-  { fly: { lat: 0, lon: -150, zoom: 1.3, seconds: 4 } },
-  { seek: 0.35, speed: 0.25, say: 'storm-3', text: 'Over the open Pacific, lightning is rare, and the drums fall quiet.' },
+  { fly: { lat: 0, lon: -150, zoom: 1.3, seconds: 4 }, reach: 0.35, then: 0.25 },
+  { say: 'storm-3', text: 'Over the open Pacific, lightning is rare, and the drums fall quiet.' },
   { pause: 1 },
   { focus: null, speed: 1, fly: { lat: 5, lon: -60, zoom: 1, seconds: 4 }, wait: false },
   { say: 'storm-4', text: 'Underneath, a low rumble swells as the whole planet grows stormier.' },

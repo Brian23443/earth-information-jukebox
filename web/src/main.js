@@ -132,8 +132,11 @@ $('start-btn').focus();
 const show = new Show({
   get globe() { return globe; },
   get sound() { return sound; },
+  // Resolves true if it switched (false: that dataset was already on screen).
   async selectDataset(id) {
-    if (current?.ds.id !== id) await selectDataset(DATASETS.find((d) => d.id === id));
+    if (current?.ds.id === id) return false;
+    await selectDataset(DATASETS.find((d) => d.id === id));
+    return true;
   },
   seek(f) {
     $('scrub').value = String(Math.round(f * 1000));
@@ -144,9 +147,22 @@ const show = new Show({
     if (detail.on) exitDetail({ resume: p });
     else setPlaying(p);
   },
+  // Any speed (the show glides the timeline with in-between values); the menu shows it
+  // only when it's one of its own.
   setSpeed(x) {
-    $('speed').value = String(x);
-    $('speed').dispatchEvent(new Event('change'));
+    speed = x;
+    if (video) video.playbackRate = x;
+    if ([...$('speed').options].some((o) => Number(o.value) === x)) $('speed').value = String(x);
+  },
+  // Where the timeline is (0-1), and how far it moves per second at 1x.
+  position() {
+    return current ? (frame / current.summary.frames) % 1 : 0;
+  },
+  rate() {
+    if (!current) return 0;
+    if (video?.duration) return 1 / video.duration;
+    const m = current.frames ?? {};
+    return ((m.fps ?? 30) / (m.movieStride ?? 4)) / current.summary.frames;
   },
   probe(on) {
     probeOn = on;
@@ -156,6 +172,9 @@ const show = new Show({
     if (text) $('show-caption').textContent = text;
   },
   onEnd() {
+    // Back to the speed the menu shows (the show may have left an in-between one).
+    speed = Number($('speed').value);
+    if (video) video.playbackRate = speed;
     $('show-bar').hidden = true;
     document.body.classList.remove('showing');
     $('show-btn').hidden = false;

@@ -9,6 +9,8 @@
 //   { fly: { lat, lon, zoom, seconds }, wait: false }   move the camera (waits unless wait: false)
 //   { say: 'ocean-1', text: '…' } a narration line (waits until it has been spoken)
 //   { pause: 1.5 }                wait this many seconds (a moment to just listen)
+//   { reach: 0.35, then: 0.25 }   glide the timeline to 35% (faster or slower, never a jump)
+//                                 by the end of this step's flight, then play at 0.25x
 //
 // Narration: a recorded file web/public/show/voice/<id>.mp3 when there is one, otherwise
 // the browser's built-in voice reads the text (a stand-in until recordings exist).
@@ -21,7 +23,7 @@ const VOICE_DIR = 'show/voice';
 
 export class Show {
   constructor(ctx) {
-    this.ctx = ctx; // { globe, sound, selectDataset(id), seek(f), setPlaying(b), setSpeed(x), probe(b), caption(text|null), onEnd() }
+    this.ctx = ctx; // { globe, sound, selectDataset(id), seek(f), setPlaying(b), setSpeed(x), position(), rate(), probe(b), caption(text|null), onEnd() }
     this.running = false;
     this.cancels = new Set();
     this.recordings = null;
@@ -67,12 +69,27 @@ export class Show {
 
   async _step(s) {
     const { ctx } = this;
-    if (s.dataset) await this._cancellable(ctx.selectDataset(s.dataset)); // (chimes, in main.js)
-    if (s.seek != null) ctx.seek(s.seek);
-    if (s.speed != null) ctx.setSpeed(s.speed);
+    let switched = false;
+    if (s.dataset) switched = await this._cancellable(ctx.selectDataset(s.dataset)); // (chimes, in main.js)
+    // A seek only right after a dataset switch, where the transition hides it. If the
+    // dataset was already showing, glide there instead (see reach, below).
+    let reach = s.reach, then = s.then;
+    if (s.seek != null) {
+      if (switched || !s.dataset) ctx.seek(s.seek);
+      else { reach = s.seek; then = s.speed; }
+    }
+    if (s.speed != null && reach == null) ctx.setSpeed(s.speed);
     if (s.play != null) ctx.setPlaying(s.play);
     if (s.focus !== undefined) ctx.sound.focus(s.focus);
     if (s.probe != null) ctx.probe(s.probe);
+    // Glide the timeline to a moment instead of jumping there: play faster or slower so it
+    // arrives as the camera does (over the flight, or `within` seconds).
+    if (reach != null) {
+      const seconds = s.fly?.seconds ?? s.within ?? 3;
+      const ahead = (reach - ctx.position() + 1) % 1; // timelines loop
+      const needed = ahead / Math.max(1e-6, ctx.rate() * seconds);
+      ctx.setSpeed(Math.max(0.1, Math.min(4, needed)));
+    }
     if (s.fly) {
       const arrived = ctx.globe.flyTo(s.fly);
       // A whoosh as big as the move, panned the way the planet turns.
@@ -82,7 +99,12 @@ export class Show {
         const strength = Math.min(1, turn / 2 + Math.abs(f.to.distance - f.from.distance) * 0.3);
         ctx.sound.whoosh(f.seconds, strength, f.to.spin >= f.from.spin ? 1 : -1);
       }
+      // Once there, the speed to carry on at (even when the show doesn't wait for the move).
+      if (reach != null && then != null) arrived.then(() => { if (this.running) ctx.setSpeed(then); });
       if (s.wait !== false) await this._cancellable(arrived);
+    } else if (reach != null) {
+      await this._sleep(s.within ?? 3);
+      if (then != null) ctx.setSpeed(then);
     }
     if (s.say) await this._say(s.say, s.text);
     if (s.pause) await this._sleep(s.pause);
