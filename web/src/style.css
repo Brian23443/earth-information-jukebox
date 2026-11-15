@@ -179,8 +179,8 @@ button, select, input { font: inherit; color: inherit; }
 }
 
 /* Category labels fade across instead of snapping (main.js showReadout). */
-.readout-value, .readout-place { transition: opacity 0.14s ease; }
-.readout.swapping .readout-value, .readout.swapping .readout-place { opacity: 0; }
+.readout-value { transition: opacity 0.14s ease; }
+.readout.swapping .readout-value { opacity: 0; }
 
 /* Aerosol mix: four thin bars in the legend's colours. */
 .readout-mix { margin-top: 14px; display: grid; gap: 7px; }

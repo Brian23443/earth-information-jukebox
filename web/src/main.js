@@ -647,7 +647,8 @@ $('mute').addEventListener('click', (e) => {
 
 // Color legend for the current dataset (from datasets.js), hidden when it has none.
 function updateLegend(ds) {
-  const lg = ds.legend;
+  // Aerosols name and colour each type in the readout's bars, so no separate legend.
+  const lg = ds.typeShort ? null : ds.legend;
   $('legend').hidden = !lg;
   if (!lg) return;
   $('legend-label').textContent = lg.label;
@@ -1001,24 +1002,28 @@ function updateMix(classes) {
   });
 }
 
-// Category readouts (aerosols) change only once a new reading has held for a moment, and
-// fade across: at plume edges the strongest type flickers between neighbours, and the big
-// label used to flip several times a second. Numbers (temperatures) update directly.
-const READOUT_HOLD_MS = 800;
+// Category readouts (aerosols): the big word (the type) changes only once a new type has
+// held for a moment, and fades across; at plume edges the strongest type flickers between
+// neighbours and used to flip several times a second. The small line (amount, place)
+// updates directly. Numbers (temperatures) update directly too.
+const READOUT_HOLD_MS = 300;
 const steady = { key: null, pendingKey: null, since: 0 };
 function showReadout(key, value, sub) {
+  $('readout-place').textContent = sub;
+  if (key === steady.key) { steady.pendingKey = null; return; }
   const now = performance.now();
-  if (key === steady.key) { steady.pendingKey = null; $('readout-place').textContent = sub; return; }
   if (key !== steady.pendingKey) { steady.pendingKey = key; steady.since = now; }
   if (steady.key !== null && now - steady.since < READOUT_HOLD_MS) return;
+  const first = steady.key === null;
   steady.key = key;
+  steady.pendingKey = null;
+  if (first || $('readout-value').textContent === value) { $('readout-value').textContent = value; return; }
   const el = $('readout');
   el.classList.add('swapping');
   setTimeout(() => {
     $('readout-value').textContent = value;
-    $('readout-place').textContent = sub;
     el.classList.remove('swapping');
-  }, steady.key === null ? 0 : 140);
+  }, 140);
 }
 
 function updateReadout() {
@@ -1030,7 +1035,7 @@ function updateReadout() {
   const place = formatPlace(p);
   if (current.summary.classes) {
     const amount = r.amount ? r.amount[0].toUpperCase() + r.amount.slice(1) : null;
-    showReadout(r.short ? `${r.type}|${r.amount}` : r.text, r.short ?? r.text, amount ? `${amount} · ${place}` : place);
+    showReadout(r.short ? `type ${r.type}` : r.text, r.short ?? r.text, amount ? `${amount} · ${place}` : place);
   } else {
     steady.key = steady.pendingKey = null;
     $('readout-value').textContent = r.text;
