@@ -32,6 +32,8 @@ class Smoothed {
   }
 }
 
+if (import.meta.env.DEV) window.__Tone = Tone; // for level checks in the browser
+
 export class SoundEngine {
   constructor() {
     this.master = new Tone.Volume(MASTER_DB).toDestination();
@@ -121,10 +123,12 @@ export class SoundEngine {
     dust.oscs.forEach((o) => { o.volume.value = -14; o.connect(dust.filter); });
     // Sea salt: airy shimmer that swells like surf.
     const salt = voice();
-    salt.filter = new Tone.Filter(4200, 'highpass').connect(salt.gain);
+    // (Measured at a typical amount it sat ~29 dB below the dust drone, nearly inaudible:
+    // lifted ~15 dB and opened down to 2.6 kHz so it reads as surf, not a faint hiss.)
+    salt.filter = new Tone.Filter(2600, 'highpass').connect(salt.gain);
     salt.trem = new Tone.Tremolo(0.25, 0.7).connect(salt.filter).start();
     salt.noise = new Tone.Noise('pink');
-    salt.noise.volume.value = -16;
+    salt.noise.volume.value = -2;
     salt.noise.connect(salt.trem);
     // Sulfates: bell tones on the pentatonic scale.
     const sulfate = voice();

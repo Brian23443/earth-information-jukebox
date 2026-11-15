@@ -106,6 +106,7 @@ async function begin({ withShow }) {
   $('start').classList.add('leaving');
   const leaving = globe.leaveCover();
   sound = new SoundEngine();
+  if (import.meta.env.DEV) window.__sound = sound;
   await sound.start();
   // Development only (npm run dev): start muted. The mute button still unmutes.
   // Production builds are unaffected. Set DEV_START_MUTED to false to hear it by default.
