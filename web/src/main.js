@@ -77,6 +77,7 @@ $('start-btn').addEventListener('click', async () => {
   $('start').hidden = true;
   $('app').hidden = false;
   globe = new Globe($('globe'), { reducedMotion });
+  if (import.meta.env.DEV) window.__globe = globe; // for side-by-side checks in the browser
   globe.onZoom = onZoom;
   bindExplore();
   buildShelf();

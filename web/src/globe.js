@@ -242,6 +242,7 @@ export class Globe {
       cf0: { value: new THREE.Vector4(1, 0, 0, 0) },
       cf1: { value: new THREE.Vector4(0, 1, 0, 0) },
       cf2: { value: new THREE.Vector4(0, 0, 1, 0) },
+      smoothOn: { value: 1 }, // bicubic sampling where texels are magnified (zoomed in)
     };
     this.material.onBeforeCompile = (shader) => {
       Object.assign(shader.uniforms, this.uniforms);
@@ -255,11 +256,66 @@ uniform float landOn;
 uniform float colorFixOn;
 uniform vec4 cf0;
 uniform vec4 cf1;
-uniform vec4 cf2;`,
+uniform vec4 cf2;
+uniform float smoothOn;
+
+// Catmull-Rom bicubic in 9 bilinear taps. Only used where one texel covers more than a
+// screen pixel: there, plain bilinear shows soft blocks; zoomed out it would just cost time
+// (and skip mipmaps), so it fades back to the normal lookup.
+vec4 sampleCatmullRom(sampler2D tex, vec2 uv, vec2 size) {
+  vec2 p = uv * size;
+  vec2 t1 = floor(p - 0.5) + 0.5;
+  vec2 f = p - t1;
+  vec2 w0 = f * (-0.5 + f * (1.0 - 0.5 * f));
+  vec2 w1 = 1.0 + f * f * (-2.5 + 1.5 * f);
+  vec2 w2 = f * (0.5 + f * (2.0 - 1.5 * f));
+  vec2 w3 = f * f * (-0.5 + 0.5 * f);
+  vec2 w12 = w1 + w2;
+  vec2 t0 = (t1 - 1.0) / size;
+  vec2 t3 = (t1 + 2.0) / size;
+  vec2 t12 = (t1 + w2 / w12) / size;
+  vec4 r = vec4(0.0);
+  r += textureLod(tex, vec2(t0.x,  t0.y),  0.0) * w0.x  * w0.y;
+  r += textureLod(tex, vec2(t12.x, t0.y),  0.0) * w12.x * w0.y;
+  r += textureLod(tex, vec2(t3.x,  t0.y),  0.0) * w3.x  * w0.y;
+  r += textureLod(tex, vec2(t0.x,  t12.y), 0.0) * w0.x  * w12.y;
+  r += textureLod(tex, vec2(t12.x, t12.y), 0.0) * w12.x * w12.y;
+  r += textureLod(tex, vec2(t3.x,  t12.y), 0.0) * w3.x  * w12.y;
+  r += textureLod(tex, vec2(t0.x,  t3.y),  0.0) * w0.x  * w3.y;
+  r += textureLod(tex, vec2(t12.x, t3.y),  0.0) * w12.x * w3.y;
+  r += textureLod(tex, vec2(t3.x,  t3.y),  0.0) * w3.x  * w3.y;
+  // Catmull-Rom overshoots at hard edges (dark halos around bright spots). Clamp to the
+  // range of the four nearest texels so it can't invent values the data doesn't have.
+  vec2 a = t1 / size, b = (t1 + 1.0) / size;
+  vec4 c00 = textureLod(tex, a, 0.0), c10 = textureLod(tex, vec2(b.x, a.y), 0.0);
+  vec4 c01 = textureLod(tex, vec2(a.x, b.y), 0.0), c11 = textureLod(tex, b, 0.0);
+  return clamp(r, min(min(c00, c10), min(c01, c11)), max(max(c00, c10), max(c01, c11)));
+}
+
+// How many screen pixels one texel spans here (> 1 means magnified).
+float texelScreenSize(vec2 uv, vec2 size) {
+  vec2 d = fwidth(uv * size);
+  return 1.0 / max(max(d.x, d.y), 1e-6);
+}
+
+vec4 sampleSmooth(sampler2D tex, vec2 uv) {
+  vec4 lin = texture2D(tex, uv);
+  if (smoothOn < 0.5) return lin;
+  vec2 size = vec2(textureSize(tex, 0));
+  float k = smoothstep(0.9, 1.4, texelScreenSize(uv, size));
+  if (k <= 0.0) return lin;
+  return mix(lin, sampleCatmullRom(tex, uv, size), k);
+}`,
         )
         .replace(
           '#include <map_fragment>',
-          `#include <map_fragment>
+          `#ifdef USE_MAP
+  vec4 sampledDiffuseColor = sampleSmooth(map, vMapUv);
+  #ifdef DECODE_VIDEO_TEXTURE
+    sampledDiffuseColor = sRGBTransferEOTF(sampledDiffuseColor);
+  #endif
+  diffuseColor *= sampledDiffuseColor;
+#endif
 #ifdef USE_MAP
   if (colorFixOn > 0.5) {
     // The matrix was fitted in display (sRGB) space: convert, apply, convert back.
@@ -269,12 +325,12 @@ uniform vec4 cf2;`,
   }
   if (landOn > 0.5) {
     float m = texture2D(landMask, vMapUv).r;
-    diffuseColor.rgb = mix(diffuseColor.rgb, texture2D(landMap, vMapUv).rgb, m);
+    if (m > 0.0) diffuseColor.rgb = mix(diffuseColor.rgb, sampleSmooth(landMap, vMapUv).rgb, m);
   }
 #endif`,
         );
     };
-    this.material.customProgramCacheKey = () => 'globe-land-colorfix-v2';
+    this.material.customProgramCacheKey = () => 'globe-land-colorfix-bicubic-v4';
   }
 
   spinBy(rad) {
