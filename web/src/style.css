@@ -352,7 +352,8 @@ input[type='range']::-moz-range-thumb { width: 10px; height: 10px; border-radius
   margin: 0; font-size: 21px; font-weight: 500; line-height: 1.4; color: #fff; min-height: 1.4em; text-wrap: balance;
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.9), 0 0 14px rgba(0, 0, 0, 0.75), 0 0 28px rgba(0, 0, 0, 0.5);
 }
-.show-bar .btn-text { padding: 4px; font-size: 11px; white-space: nowrap; filter: var(--lift); }
+/* The way out stays fully bright (the locked controls nearby are dimmed). */
+.show-bar .show-btn { white-space: nowrap; filter: var(--lift); }
 body.showing .readout { opacity: 0.85; }
 /* Locked during the show (main.js lockForShow): dimmed. */
 body.showing #shelf, body.showing #play, body.showing .timeline, body.showing .speed { opacity: 0.4; transition: opacity 0.3s; }
