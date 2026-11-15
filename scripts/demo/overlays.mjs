@@ -19,8 +19,11 @@ const pages = {
   // Required disclosure for the synthetic narration (Space Apps rules on SI-generated audio).
   disclosure: `<div style="position:absolute;right:${F.x}px;bottom:8px;font-size:10px;letter-spacing:.08em;
     text-transform:uppercase;color:rgba(255,255,255,.42)">Narration voice: AI-generated</div>`,
+  // Who made it, across the top margin for the whole video.
+  header: `<div style="position:absolute;left:${F.x}px;top:6px;font-size:10px;letter-spacing:.14em;
+    text-transform:uppercase;color:rgba(255,255,255,.5)">Brian Bonti · Team Waveform · NASA Space Apps Challenge 2026</div>`,
   end: `<div style="position:absolute;inset:0;background:#000;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center">
-    <div style="font-size:12px;letter-spacing:.32em;text-transform:uppercase;color:rgba(255,255,255,.6)">Team Waveform · NASA Space Apps Challenge 2026</div>
+    <div style="font-size:12px;letter-spacing:.32em;text-transform:uppercase;color:rgba(255,255,255,.6)">Brian Bonti · Team Waveform · NASA Space Apps Challenge 2026</div>
     <div style="font-family:Barlow,Inter,sans-serif;font-weight:600;font-size:64px;letter-spacing:.01em;text-transform:uppercase;margin-top:18px;line-height:1">Earth Information Jukebox</div>
     <div style="font-size:20px;margin-top:16px;color:rgba(255,255,255,.82)">A new way to hear the world</div>
     <div style="margin-top:38px;font-size:16px;letter-spacing:.04em;padding:10px 20px;border:1px solid rgba(255,255,255,.55);border-radius:2px">brian23443.github.io/earth-information-jukebox</div>

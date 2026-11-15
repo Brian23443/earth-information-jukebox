@@ -14,7 +14,7 @@ The Earth Information Jukebox is a web app that lets anyone hear NASA's Earth vi
 
 ## Link to Project Demo
 
-**TODO:** upload the final `submission/demo.mp4` (under 30 seconds) to YouTube as Public or Unlisted, test the link in a private window, and paste it here.
+**TODO:** upload `submission/demo.mp4` (29.6 seconds) to YouTube as Public or Unlisted, test the link in a private window, and paste it here.
 
 ## Link to Final Project
 
@@ -92,8 +92,8 @@ From NASA's Scientific Visualization Studio, via the Earth Information Center:
 
 ## Before you press "Submit for Judging" (deadline: Sunday, November 15, 11:59 p.m. local time)
 
-- [ ] **Team members' names:** the guide asks for them in the demo. Send them to Claude, who will add them to the video's opening caption and end card.
-- [ ] **Final narration:** record the 6 lines in `docs/demo-video-script.md` and re-render the video. The current cut uses a stand-in synthetic voice.
+- [x] **Team:** Brian Bonti (solo), Team Waveform. The name is in the video's header and on its end card.
+- [x] **Demo video:** `submission/demo.mp4`, 29.6 seconds, with the recorded narration.
 - [ ] **Upload the video to YouTube** as Public or Unlisted (not Private), and paste the link into "Link to Project Demo".
 - [ ] **Test every link** in a private window, signed out.
 - [ ] **Optional:** request a FortiGuard web filter classification for `brian23443.github.io` (Category: Education; Company Name: N/A), so school or venue networks don't block the site.

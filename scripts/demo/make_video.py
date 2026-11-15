@@ -15,15 +15,17 @@ FX, FY, FW, FH = 160, 40, 2240, 1260   # recording's place in the 2560x1440 fram
 
 # (take, start, end) in the raw recordings; see the takes' .marks.json
 SHOTS = [
-    ("main", 0.6, 10.0),    # cover, the click, the dissolve into the ocean
-    ("main", 14.25, 18.95),   # pointing from the North Pacific to the equator: the tone climbs
-    ("main", 25.1, 29.8),   # lightning: the transition and storms over Africa
-    ("main", 31.3, 36.0),   # aerosols: the transition into Saharan dust and African smoke
-    ("show", 9.0, 13.6),    # the guided show, with its captions
+    ("main", 0.6, 8.6),     # cover, the click, the dissolve into the ocean
+    ("main", 14.25, 18.95), # pointing from the North Pacific to the equator: the tone climbs
+    ("main", 25.1, 29.6),   # lightning: the transition and storms over Africa
+    ("main", 31.3, 36.9),   # aerosols: the transition into Saharan dust and African smoke
+    ("show", 9.0, 13.8),    # the guided show, with its captions
 ]
-END = 2.8                   # end card
-# narration line -> (shot index, seconds into that shot)
-VO = [(0, 0.3), (0, 4.1), (1, 0.35), (2, 0.45), (3, 0.4), (4, 0.4)]
+END = 3.5                   # end card
+# (line in lines.json, shot index, seconds into that shot). Line 1 (the spoken intro) is left
+# out: the recorded voice is slower than the script was timed for, and the cover and header
+# already name the team.
+VO = [(2, 0, 0.35), (3, 1, 0.25), (4, 2, 0.25), (5, 3, 0.25), (6, 4, 0.4)]
 
 lens = [b - a for _, a, b in SHOTS]
 starts, t = [], 0.0
@@ -52,18 +54,18 @@ def find(i):
     return by_text[0]
 
 speed = float(os.environ.get("SPEED", "1"))
-trim = "silenceremove=start_periods=1:start_threshold=-45dB:start_silence=0.05"
+trim = "silenceremove=start_periods=1:start_threshold=-45dB:start_silence=0.03"
+# Pauses inside a line longer than 0.22 s are shortened to 0.18 s.
+tighten = "silenceremove=stop_periods=-1:stop_duration=0.22:stop_threshold=-40dB:stop_silence=0.18"
 voice = []
-for i in range(1, 7):
+for i, shot, off in VO:
     src = find(i)
     norm = vdir / f"_n{i}.wav"
-    chain = f"{trim},areverse,{trim},areverse," + (f"atempo={speed}," if speed != 1 else "") + "loudnorm=I=-16:TP=-1.5:LRA=11"
+    chain = f"{trim},areverse,{trim},areverse,{tighten}," + (f"atempo={speed}," if speed != 1 else "") + "loudnorm=I=-16:TP=-1.5:LRA=11"
     subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", str(src), "-af", chain, "-ar", "48000", "-ac", "2", str(norm)], check=True)
-    shot, off = VO[i - 1]
-    at = starts[shot] + off
-    voice.append((norm, at, dur(norm)))
-for (n, at, d), nxt in zip(voice, voice[1:] + [(None, total, 0)]):
-    print(f"{n.name}: {at:5.2f}-{at + d:5.2f}s" + ("  OVERLAPS NEXT" if at + d > nxt[1] - 0.1 else ""))
+    voice.append((i, norm, starts[shot] + off, dur(norm)))
+for (i, n, at, d), nxt in zip(voice, voice[1:] + [(0, None, total, 0)]):
+    print(f"line {i}: {at:5.2f}-{at + d:5.2f}s" + ("  OVERLAPS NEXT" if at + d > nxt[2] - 0.1 else ""))
 
 inputs, fc = [], []
 def inp(*args):
@@ -91,20 +93,22 @@ for k in range(1, len(SHOTS) + 1):
 # Overlays: frame edge, disclosure, captions while each line plays
 fr = inp("-loop", "1", "-framerate", f"{FPS}", "-i", str(ov / "frame.png"))
 ds = inp("-loop", "1", "-framerate", f"{FPS}", "-i", str(ov / "disclosure.png"))
+hd = inp("-loop", "1", "-framerate", f"{FPS}", "-i", str(ov / "header.png"))
 fc.append(f"[{v}][{fr}:v]overlay=0:0:shortest=1:enable='lt(t,{end_start})'[o0]")
 fc.append(f"[o0][{ds}:v]overlay=0:0:shortest=1:enable='lt(t,{end_start})'[o1]")
-v = "o1"
-for i, (n, at, d) in enumerate(voice, 1):
+fc.append(f"[o1][{hd}:v]overlay=0:0:shortest=1:enable='lt(t,{end_start})'[o2]")
+v = "o2"
+for k, (i, n, at, d) in enumerate(voice):
     c = inp("-loop", "1", "-framerate", f"{FPS}", "-i", str(ov / f"cap{i}.png"))
-    stop = min(at + d + 0.35, end_start if i < 6 else total)
+    stop = min(at + d + 0.35, voice[k + 1][2] - 0.12 if k < len(voice) - 1 else total)
     fc.append(f"[{c}:v]format=rgba,fade=in:st={at - 0.1:.2f}:d=0.15:alpha=1,fade=out:st={stop - 0.15:.2f}:d=0.15:alpha=1[c{i}]")
-    fc.append(f"[{v}][c{i}]overlay=0:0:shortest=1:enable='between(t,{at - 0.1:.2f},{stop:.2f})'[o{i + 1}]")
-    v = f"o{i + 1}"
+    fc.append(f"[{v}][c{i}]overlay=0:0:shortest=1:enable='between(t,{at - 0.1:.2f},{stop:.2f})'[oc{i}]")
+    v = f"oc{i}"
 fc.append(f"[{v}]trim=0:{total:.3f},fade=in:st=0:d=0.4,fade=out:st={total - 0.5:.3f}:d=0.5[vout]")
 
 # Narration over the app's own sound, which ducks under the voice
 vin = []
-for i, (n, at, d) in enumerate(voice, 1):
+for i, n, at, d in voice:
     j = inp("-i", str(n))
     fc.append(f"[{j}:a]adelay={int(at * 1000)}|{int(at * 1000)}[n{i}]")
     vin.append(f"[n{i}]")
