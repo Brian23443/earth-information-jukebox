@@ -121,8 +121,17 @@ export class GridCache {
 
 // events.bin: 9-byte records (uint16 x, y, start, end; uint8 radius*10), little-endian.
 // Unpacked into typed arrays the globe hands straight to the GPU.
-// Lightning dots from pipeline/events.py (10-byte records) and the night base maps from
-// pipeline/nightmap.py.
+// Lightning dots from pipeline/events.py, parsed and placed in a worker (events-worker.js),
+// plus the night base maps from pipeline/nightmap.py.
+function parseEvents(buf, width, height) {
+  return new Promise((resolve, reject) => {
+    const w = new Worker(new URL('./events-worker.js', import.meta.url), { type: 'module' });
+    w.onmessage = (e) => { resolve(e.data); w.terminate(); };
+    w.onerror = (e) => { reject(e); w.terminate(); };
+    w.postMessage({ buf, width, height }, [buf]);
+  });
+}
+
 async function loadEvents(dir, optional, has) {
   const meta = await optional('events.json');
   if (!meta) return null;
@@ -131,29 +140,13 @@ async function loadEvents(dir, optional, has) {
     has('night_8k.jpg'),
     has('night_4k.jpg'),
   ]);
-  const dv = new DataView(buf);
-  const n = meta.count;
-  const ev = {
-    count: n, width: meta.width, height: meta.height, frames: meta.frames,
+  const gpu = await parseEvents(buf, meta.width, meta.height);
+  return {
+    ...gpu, // count, pos, time, dot, start, maxLife
+    width: meta.width, height: meta.height, frames: meta.frames,
     base: `${dir}/base.jpg`,
     night: night8 || night4 ? { 8192: night8 ? `${dir}/night_8k.jpg` : null, 4096: night4 ? `${dir}/night_4k.jpg` : null } : null,
-    cx: new Float32Array(n), cy: new Float32Array(n),
-    start: new Float32Array(n), end: new Float32Array(n),
-    dot: new Float32Array(n * 2), // radius (source px), peak brightness 0-1
   };
-  for (let i = 0, o = 0; i < n; i++, o += 10) {
-    ev.cx[i] = dv.getUint16(o, true) / 4;
-    ev.cy[i] = dv.getUint16(o + 2, true) / 4;
-    ev.start[i] = dv.getUint16(o + 4, true);
-    ev.end[i] = dv.getUint16(o + 6, true);
-    ev.dot[i * 2] = dv.getUint8(o + 8) / 10;
-    ev.dot[i * 2 + 1] = dv.getUint8(o + 9) / 255;
-  }
-  // Longest a dot stays on screen: the globe only draws dots that started within it.
-  let maxLife = 0;
-  for (let i = 0; i < n; i++) maxLife = Math.max(maxLife, ev.end[i] - ev.start[i]);
-  ev.maxLife = maxLife;
-  return ev;
 }
 
 // Returns both playback videos when present: videoUrl (2048, everyone starts here) and
@@ -167,7 +160,18 @@ async function getDataIndex() {
   return dataIndex;
 }
 
-export async function loadDataset(ds) {
+// Each dataset is loaded once per visit: switching back is instant.
+const loadCache = new Map();
+export function loadDataset(ds) {
+  if (!loadCache.has(ds.id)) {
+    const p = loadDatasetUncached(ds);
+    loadCache.set(ds.id, p);
+    p.then((r) => { if (!r) loadCache.delete(ds.id); }, () => loadCache.delete(ds.id));
+  }
+  return loadCache.get(ds.id);
+}
+
+async function loadDatasetUncached(ds) {
   const dir = `${BASE}/${ds.id}`;
   const index = await getDataIndex();
   const listing = index ? index.datasets[ds.id]?.files ?? null : undefined;

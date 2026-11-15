@@ -111,8 +111,32 @@ $('start-btn').addEventListener('click', async () => {
   $('start').hidden = true;
   $('app').classList.remove('intro');
   $('globe').focus(); // keyboard users land on the globe, ready to spin
+  setTimeout(preloadOtherDatasets, 1500);
 });
 $('start-btn').focus();
+
+// While the first dataset plays, quietly get the others ready: data (lightning's dots are
+// parsed in a worker), their dot buffers and still images uploaded to the GPU one at a
+// time, so the first switch to each is as quick as later ones.
+async function preloadOtherDatasets() {
+  const pause = () => new Promise((r) => setTimeout(r, 300));
+  for (const ds of DATASETS) {
+    const l = await loadDataset(ds).catch(() => null);
+    if (!l || l === current) continue;
+    if (l.events) {
+      globe.prepareEvents(l.events); // uploaded on the next frame
+      await pause();
+      const night = await nightTexture(l.events).catch(() => null);
+      if (night) globe.renderer.initTexture(night);
+    }
+    if (l.land) {
+      const tex = await Promise.all([cachedStill(l.land.image), cachedStill(l.land.mask)]).catch(() => []);
+      tex.forEach((t) => globe.renderer.initTexture(t));
+    }
+    if (l.videoUrl) fetch(quality.preferHigh && l.videoUrlHigh ? l.videoUrlHigh : l.videoUrl, { headers: { Range: 'bytes=0-1500000' } }).catch(() => {}); // warm the first seconds
+    await pause();
+  }
+}
 
 // ---------- Dataset shelf ----------
 function buildShelf() {
@@ -140,10 +164,36 @@ const PROBE_TIMEOUT_MS = 10_000;
 const STALLS_TO_DOWNGRADE = 2;
 const STALL_WINDOW_MS = 30_000;
 const params = new URLSearchParams(location.search);
-const quality = { res: null, probeMbps: null, note: '', locked: false, token: 0 };
+const quality = { res: null, probeMbps: null, note: '', locked: false, token: 0, preferHigh: false };
 
-let landTextures = [];
-let baseTexture = null; // static base map for vector-event datasets (lightning)
+// Still images (night maps, land layers) stay on the GPU for the visit: decoded once, off
+// the main thread, and reused on every switch.
+const stillCache = new Map();
+function cachedStill(url) {
+  if (!stillCache.has(url)) {
+    const p = loadStill(url);
+    stillCache.set(url, p);
+    p.catch(() => stillCache.delete(url));
+  }
+  return stillCache.get(url);
+}
+
+// Lightning's night map: the 4096 version first (0.4 MB, quick to decode and upload); the
+// 8192 one only once someone zooms in far enough to see the difference.
+const NIGHT_8K_ZOOM = 1.4;
+function nightTexture(ev) {
+  if (!ev.night) return cachedStill(ev.base);
+  const big = ev.night[8192];
+  if (big && stillCache.has(big)) return stillCache.get(big).catch(() => cachedStill(ev.night[4096] ?? big));
+  return cachedStill(ev.night[4096] ?? big);
+}
+function sharpenNight(ev) {
+  const big = ev.night?.[8192];
+  if (!big || nightMapUrl(ev) !== big) return; // small screens / GPUs keep 4096
+  cachedStill(big).then((tex) => {
+    if (current?.events === ev && globe.material.map !== tex) globe.setTexture(tex);
+  }).catch(() => {});
+}
 
 // NASA Black Marble under the lightning: 8192 wide where the GPU and screen can use it.
 function nightMapUrl(ev) {
@@ -193,9 +243,16 @@ function makeVideo(url) {
   return v;
 }
 
-// Swap the playing video for another file at the same moment, without a visible jump.
-async function useVideo(url, res, { syncFrom = null } = {}) {
+// Put a video on the globe. syncFrom: swap the playing video for another file at the same
+// moment, without a visible jump (quality upgrade). swap: a dataset switch; nothing changes
+// until this video has a decoded first frame, then it sweeps in over swap.prev and
+// swap.done() retires the old video. Returns false if it was superseded or couldn't load.
+async function useVideo(url, res, { syncFrom = null, swap = null } = {}) {
   const v = makeVideo(url);
+  if (swap) {
+    if (v.readyState < 2) await Promise.race([once(v, 'loadeddata'), new Promise((r) => setTimeout(r, 6000))]);
+    if (swap.token !== switchToken) { v.removeAttribute('src'); v.load(); return false; }
+  }
   if (syncFrom) {
     if (v.readyState < 1) await once(v, 'loadedmetadata');
     v.currentTime = syncFrom.currentTime;
@@ -211,6 +268,7 @@ async function useVideo(url, res, { syncFrom = null } = {}) {
   showPausedFrames(v, videoTexture);
   quality.res = res; // set before videoColorFix() reads it
   if (!detail.on) globe.setTexture(videoTexture, videoColorFix());
+  if (swap) globe.swapFrom(swap.prev, swap.done);
   if (playing && !detail.on) v.play().catch(() => {});
   trackVideoFrames(v, current.frames);
   if (res === 4096) watchStalls(v);
@@ -283,6 +341,7 @@ async function maybeUpgrade(loaded) {
   if (mbps < UPGRADE_MBPS) { quality.note = `connection ${Math.round(mbps)} Mbps: staying on 2048`; return; }
   const ok = await useVideo(loaded.videoUrlHigh, 4096, { syncFrom: video });
   quality.note = ok ? 'upgraded to 4096' : '4096 could not buffer: staying on 2048';
+  if (ok) quality.preferHigh = true; // later switches start on 4096 directly (no second swap)
 }
 
 // Two stalls ("waiting" while playing) within 30 s -> back to 2048 for the rest of the visit.
@@ -301,8 +360,16 @@ function watchStalls(v) {
   });
 }
 
+// Switching datasets: nothing freezes and nothing goes blank. Data arrives from the cache
+// (loaded once, lightning dots parsed in a worker, other datasets preloaded after start).
+// The globe keeps showing the old dataset until the new one's first picture is ready, then
+// the new one sweeps across (globe.swapFrom) and lightning dots fade in or out.
+let switchToken = 0;
 async function selectDataset(ds) {
+  const token = ++switchToken;
+  for (const b of $('shelf').children) b.setAttribute('aria-pressed', String(b.dataset.id === ds.id));
   const loaded = await loadDataset(ds);
+  if (token !== switchToken) return;
   if (!loaded) {
     announcer.say(`${ds.title} isn't built yet. Run the pipeline for ${ds.id}.`, { force: true });
     return;
@@ -312,71 +379,73 @@ async function selectDataset(ds) {
   extractor = new FeatureExtractor(loaded.summary);
   frame = 0;
 
-  if (video) { video.pause(); video.removeAttribute('src'); video.load(); video = null; }
-  videoTexture?.dispose();
+  // The old picture stays put (paused on its last frame) until the new one replaces it.
+  const prev = globe.material.map;
+  const oldVideo = video, oldVideoTex = videoTexture;
+  oldVideo?.pause();
+  video = null;
   videoTexture = null;
+  const retire = () => {
+    if (oldVideo) { oldVideo.removeAttribute('src'); oldVideo.load(); }
+    oldVideoTex?.dispose();
+  };
   quality.token++; // cancel any upgrade still in flight for the previous dataset
-  globe.clearEvents();
-  baseTexture?.dispose();
-  baseTexture = null;
+  globe.clearEvents(); // fades the dots out
+
   if (loaded.events && params.get('events') !== '0') {
-    // Vector mode (lightning): sharp static base map + GPU points, no video at all.
+    // Vector mode (lightning): static night map + GPU dots, no video at all.
     // The frame clock runs on its own (tick() advances `frame` when there is no video).
     quality.res = null;
-    quality.note = `vector events (${loaded.events.count.toLocaleString()} flashes)`;
+    quality.note = `vector events (${loaded.events.count.toLocaleString()} dots)`;
     const ev = loaded.events;
+    globe.prepareEvents(ev);
+    let night;
+    try {
+      night = await nightTexture(ev);
+    } catch (err) {
+      console.warn('[events] base map failed', err);
+      night = await cachedStill(ev.base);
+    }
+    if (token !== switchToken) return;
+    globe.setTexture(night);
     globe.setEvents(ev);
-    // Placeholder until the base map arrives (the previous dataset's video is gone, and
-    // drawing it logged "texImage2D: no video").
-    const placeholder = new THREE.DataTexture(new Uint8Array([6, 8, 14, 255]), 1, 1);
-    placeholder.needsUpdate = true;
-    globe.setTexture(placeholder);
-    baseTexture = placeholder;
-    loadStill(nightMapUrl(ev) ?? ev.base)
-      .then((tex) => {
-        if (current !== loaded) { tex.dispose(); return; }
-        baseTexture?.dispose(); // the placeholder
-        baseTexture = tex;
-        globe.setTexture(tex);
-      })
-      .catch((err) => console.warn('[events] base map failed', err));
+    globe.swapFrom(prev, retire);
+    if (globe.zoomFactor > NIGHT_8K_ZOOM) sharpenNight(ev);
   } else if (loaded.videoUrl) {
+    const swap = { token, prev, done: retire };
     if (params.get('video') === '6840' && (await canPlayFull(loaded))) {
-      await useVideo(loaded.videoUrlMax, 6840); // demo-recording mode: full resolution throughout
+      await useVideo(loaded.videoUrlMax, 6840, { swap }); // demo-recording mode: full resolution throughout
       quality.note = 'forced 6840 (HEVC)';
     } else {
       if (params.get('video') === '6840') {
         quality.note = loaded.videoUrlMax ? 'this browser cannot decode 6840 HEVC smoothly' : 'no 6840 file';
         console.warn(`[video] ?video=6840: ${quality.note}; using the normal videos`);
       }
-      const startHigh = params.get('video') === '4096' && loaded.videoUrlHigh;
-      await useVideo(startHigh ? loaded.videoUrlHigh : loaded.videoUrl, startHigh ? 4096 : 2048);
+      // Once a visit has shown the connection handles 4096, start there.
+      const startHigh = loaded.videoUrlHigh && (params.get('video') === '4096' || (quality.preferHigh && !quality.locked));
+      const ok = await useVideo(startHigh ? loaded.videoUrlHigh : loaded.videoUrl, startHigh ? 4096 : 2048, { swap });
+      if (!ok) return; // superseded by another switch
       if (!startHigh) maybeUpgrade(loaded); // runs in the background
     }
   } else if (loaded.texture) {
     globe.setTexture(loaded.texture);
+    globe.swapFrom(prev, retire);
   }
+  if (token !== switchToken) return;
 
   // Zoom limit follows the sharpest texture this dataset has.
   // (Vector events are sharp at any size, so their limit is the base map's width.)
   globe.setDetailWidth(loaded.hires?.size?.[0] ?? (loaded.events && params.get('events') !== '0' ? eventsDetailWidth(loaded.events) : 2048));
 
-  // Sharp static land over the video (loads in the background; the video shows until then).
+  // Sharp static land over the video (cached; loads in the background the first time).
   globe.setLandLayer(null, null);
-  landTextures.forEach((t) => t.dispose());
-  landTextures = [];
   if (loaded.land && params.get('land') !== '0') { // ?land=0 turns it off for A/B tests
-    Promise.all([loadStill(loaded.land.image), loadStill(loaded.land.mask)])
-      .then(([land, mask]) => {
-        if (current !== loaded) { land.dispose(); mask.dispose(); return; }
-        landTextures = [land, mask];
-        globe.setLandLayer(land, mask);
-      })
+    Promise.all([cachedStill(loaded.land.image), cachedStill(loaded.land.mask)])
+      .then(([land, mask]) => { if (current === loaded && token === switchToken) globe.setLandLayer(land, mask); })
       .catch((err) => console.warn('[land] could not load land layer', err));
   }
 
   sound.setMode(ds.sound);
-  for (const b of $('shelf').children) b.setAttribute('aria-pressed', String(b.dataset.id === ds.id));
   $('credit').innerHTML =
     `${ds.credit} <a href="${ds.svs}" target="_blank" rel="noopener">Source</a>` +
     (loaded.demo ? ' · <strong>Demo data</strong>: the pipeline hasn\'t been run yet.' : '') +
@@ -470,6 +539,7 @@ function detailThresholds() {
 
 function onZoom(z) {
   if (!current) return;
+  if (current.events && z > NIGHT_8K_ZOOM) sharpenNight(current.events);
   const { inAt, outAt } = detailThresholds();
   if (z < outAt) {
     detail.resumedZoomed = false;

@@ -199,6 +199,17 @@ On frame 700, the redrawn types match NASA's frame: the Saharan dust plume, the 
 
 Hovering a plume plays that type alone for 1.5 seconds, with the others ducked to about 12%.
 
+### Switching datasets
+
+Measured before: switching to Lightning blocked the page for ~600 ms (parsing 1.86M dots, building their GPU buffers, uploading the 8192 night map), every time. Now:
+- **Loaded once per visit** (`data.js` caches each dataset); lightning's dots are parsed and placed in a worker (`events-worker.js`), and their GPU buffers are built once and kept.
+- **Preloaded** after the app starts, one piece at a time: the other datasets' data, dot buffers, night map and land layers are decoded off the main thread and uploaded to the GPU, and the first seconds of each video are fetched.
+- **Lightning's night map** shows the 4096 version first (0.4 MB); the 8192 one loads only when someone zooms in past 1.4×.
+- **No blank frames:** the old dataset stays on the globe (paused on its last frame) until the new one's first picture is decoded, then the new one sweeps across from left to right in 0.8 s; lightning dots fade in and out. With reduced motion, it switches at once.
+- **Video quality:** once a visit has upgraded to 4096, later switches start on 4096 directly instead of 2048 then 4096.
+
+Result (M1 Pro, Chrome): no main-thread tasks over 50 ms on any switch, after preloading or before it (switching to Lightning right after start: map on screen in 212 ms).
+
 ### Cover (start screen)
 
 `python pipeline/covermaps.py` -> `web/public/cover/` (1.6 MB): NASA Blue Marble Next Generation (August 2004, topography and bathymetry, 5400×2700) by day and Black Marble 2016 city lights by night, both 4096×2048. The cover is the app's own globe, lit by a staged sun with a thin atmosphere glow, turning slowly beside the headline. "Start listening" starts audio, then the same globe glides into the app view while turning 180° (the real star map sweeps past), and the ocean data sweeps across it from the sunlit side ("data dawn") before the controls fade in, about 3.5 seconds in all. With reduced motion, it's a short fade. The Sun, Moon and planets are hidden on the cover, since its sunlight is staged.

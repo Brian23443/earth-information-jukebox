@@ -80,6 +80,8 @@ export class Globe {
     this.pivot.add(this.sphere);
     this.scene.add(this.pivot);
     this.cover = null;
+    this.eventSets = new Set(); // lightning dot buffers, kept between switches
+    this.eventPoints = null;
     this.atmosphere = this._makeAtmosphere();
     this.scene.add(this.atmosphere); // doesn't turn: the glow follows the light, not the land
     // Stars, Sun, Moon and planets for the shown date; they turn with the Earth.
@@ -162,42 +164,29 @@ export class Globe {
     }
   }
 
-  // Lightning (pipeline/events.py): every dot NASA drew, redrawn as a soft glow that stays
-  // sharp at any zoom, with a short afterglow. Each dot is one GPU point; the vertex shader
-  // works out how one source pixel lands on screen there (east and south vectors), so dots
-  // flatten correctly toward the globe's edge.
-  setEvents(events) {
-    this.clearEvents();
-    if (!events) return;
-    const { count, width, height } = events;
-    const pos = new Float32Array(count * 3);
-    const time = new Float32Array(count * 2);
-    const v = new THREE.Vector3();
-    for (let i = 0; i < count; i++) {
-      const lon = (events.cx[i] / width) * 360 - 180;
-      const lat = 90 - (events.cy[i] / height) * 180;
-      latLonToLocal(lat, lon, v).multiplyScalar(1.0015).toArray(pos, i * 3); // just above the surface
-      time[i * 2] = events.start[i];
-      time[i * 2 + 1] = events.end[i];
-    }
+  // Build a dataset's dot buffers once (they're 50+ MB on the GPU): later switches only
+  // fade them in and out. The arrays come ready-made from events-worker.js.
+  _eventPoints(events) {
+    if (events._points) return events._points;
+    const { width, height } = events;
     const geo = new THREE.BufferGeometry();
-    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-    geo.setAttribute('aTime', new THREE.BufferAttribute(time, 2));
+    geo.setAttribute('position', new THREE.BufferAttribute(events.pos, 3));
+    geo.setAttribute('aTime', new THREE.BufferAttribute(events.time, 2));
     geo.setAttribute('aDot', new THREE.BufferAttribute(events.dot, 2));
     geo.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 1.01);
     geo.setDrawRange(0, 0);
     const gl = this.renderer.getContext();
-    this.eventStarts = events.start;
-    this.eventSpan = events.maxLife + EVENT_AFTERGLOW;
-    this.eventUniforms = {
+    const c = this.renderer.domElement;
+    const uniforms = {
       uFrame: { value: 0 },
       uAfter: { value: EVENT_AFTERGLOW },
-      uViewport: { value: new THREE.Vector2(1, 1) },
+      uOpacity: { value: 0 },
+      uViewport: { value: new THREE.Vector2(c.width || 1, c.height || 1) },
       uSrc: { value: new THREE.Vector2(width, height) },
       uMaxPoint: { value: Math.min(512, gl.getParameter(gl.ALIASED_POINT_SIZE_RANGE)[1]) },
     };
     const mat = new THREE.ShaderMaterial({
-      uniforms: this.eventUniforms,
+      uniforms,
       transparent: true,
       depthWrite: false,
       depthTest: false, // far-side culling happens in the vertex shader
@@ -249,6 +238,7 @@ export class Globe {
         }`,
       fragmentShader: /* glsl */ `
         uniform float uAfter;
+        uniform float uOpacity;
         varying vec2 vEast;
         varying vec2 vSouth;
         varying float vSize;
@@ -274,42 +264,72 @@ export class Globe {
           vec3 coreColor = mix(vec3(1.0, 0.86, 0.12), vec3(1.0, 0.97, 0.82), hot * 0.85);
           coreColor = mix(coreColor, vec3(1.0, 0.45, 0.1), smoothstep(0.0, 0.5, after) * step(0.0, vSince));
           // Max-blended, so take the brighter of the dot and its halo rather than adding.
-          vec3 c = max(coreColor * min(core * 1.15, 1.0), vec3(1.0, 0.58, 0.14) * glow) * fade;
+          vec3 c = max(coreColor * min(core * 1.15, 1.0), vec3(1.0, 0.58, 0.14) * glow) * fade * uOpacity;
           float a = max(c.r, max(c.g, c.b));
           if (a < 0.003) discard;
           gl_FragColor = vec4(c, a);
         }`,
     });
-    this.eventPoints = new THREE.Points(geo, mat);
-    this.eventPoints.frustumCulled = false;
-    this.sphere.add(this.eventPoints); // rotates with the globe
-    this._updateEventScale();
+    const pts = new THREE.Points(geo, mat);
+    pts.frustumCulled = false;
+    pts.userData = { uniforms, starts: events.start, span: events.maxLife + EVENT_AFTERGLOW };
+    this.sphere.add(pts); // rotates with the globe; invisible until shown
+    this.eventSets.add(pts);
+    events._points = pts;
+    return pts;
   }
 
-  // Only flashes that started within the longest lifetime (+ afterglow) can be showing, and
-  // they're sorted by start: draw just that slice (a few thousand of 825k).
+  // Upload a dataset's dots ahead of time (on the next frame, while nothing else is happening).
+  prepareEvents(events) {
+    if (events) this._eventPoints(events);
+  }
+
+  // Lightning (pipeline/events.py): every dot NASA drew, redrawn as a soft glow that stays
+  // sharp at any zoom, with a short afterglow. Each dot is one GPU point; the vertex shader
+  // works out how one source pixel lands on screen there (east and south vectors), so dots
+  // flatten correctly toward the globe's edge. Fades in.
+  setEvents(events) {
+    this.clearEvents();
+    if (!events) return;
+    this.eventPoints = this._eventPoints(events);
+    this.eventUniforms = this.eventPoints.userData.uniforms;
+  }
+
+  // Only dots that started within the longest lifetime (+ afterglow) can be showing, and
+  // they're sorted by start: draw just that slice.
   setEventsFrame(frame) {
-    if (!this.eventUniforms) return;
-    this.eventUniforms.uFrame.value = frame;
-    const lo = lowerBound(this.eventStarts, frame - this.eventSpan);
-    const hi = lowerBound(this.eventStarts, frame + 1e-3);
+    if (!this.eventPoints) return;
+    const { uniforms, starts, span } = this.eventPoints.userData;
+    uniforms.uFrame.value = frame;
+    const lo = lowerBound(starts, frame - span);
+    const hi = lowerBound(starts, frame + 1e-3);
     this.eventPoints.geometry.setDrawRange(lo, Math.max(0, hi - lo));
   }
 
+  // Fade the current dots out (their buffers stay, for next time).
   clearEvents() {
     if (!this.eventPoints) return;
-    this.sphere.remove(this.eventPoints);
-    this.eventPoints.geometry.dispose();
-    this.eventPoints.material.dispose();
     this.eventPoints = null;
     this.eventUniforms = null;
-    this.eventStarts = null;
+  }
+
+  // Dots fade in when shown and out when hidden (~0.4 s).
+  _stepEvents(dt) {
+    const k = 1 - Math.exp(-dt * 8);
+    for (const pts of this.eventSets) {
+      const u = pts.userData.uniforms.uOpacity;
+      const target = pts === this.eventPoints ? 1 : 0;
+      u.value += (target - u.value) * k;
+      if (target === 0 && u.value < 0.01) {
+        u.value = 0;
+        pts.geometry.setDrawRange(0, 0);
+      }
+    }
   }
 
   _updateEventScale() {
-    if (!this.eventUniforms) return;
     const c = this.renderer.domElement;
-    this.eventUniforms.uViewport.value.set(c.width || 1, c.height || 1);
+    for (const pts of this.eventSets ?? []) pts.userData.uniforms.uViewport.value.set(c.width || 1, c.height || 1);
   }
 
 
@@ -331,6 +351,11 @@ export class Globe {
       coverNight: { value: blank },
       coverSun: { value: new THREE.Vector3(-0.95, 0.26, 0.16).normalize() }, // view space: from the left
       coverReveal: { value: 0 }, // 0 = all realistic Earth, 1 = all data
+      // Switching datasets: the previous texture, swept away left to right.
+      swapPrev: { value: blank },
+      swapOn: { value: 0 },
+      swapPrevVideo: { value: 0 }, // video textures hold sRGB values (decoded in the shader)
+      swapT: { value: 1 },
     };
     this.material.onBeforeCompile = (shader) => {
       Object.assign(shader.uniforms, this.uniforms);
@@ -354,6 +379,10 @@ uniform sampler2D coverDay;
 uniform sampler2D coverNight;
 uniform vec3 coverSun;
 uniform float coverReveal;
+uniform sampler2D swapPrev;
+uniform float swapOn;
+uniform float swapPrevVideo;
+uniform float swapT;
 varying vec3 vViewN;
 
 // Catmull-Rom bicubic in 9 bilinear taps. Only used where one texel covers more than a
@@ -420,6 +449,16 @@ vec4 sampleSmooth(sampler2D tex, vec2 uv) {
     c = clamp(vec3(dot(cf0.xyz, c) + cf0.w, dot(cf1.xyz, c) + cf1.w, dot(cf2.xyz, c) + cf2.w), 0.0, 1.0);
     diffuseColor.rgb = sRGBTransferEOTF(vec4(c, 1.0)).rgb;
   }
+  if (swapOn > 0.5) {
+    // The new dataset sweeps across the globe from left to right, with a faint edge line.
+    vec4 prev = sampleSmooth(swapPrev, vMapUv);
+    if (swapPrevVideo > 0.5) prev = sRGBTransferEOTF(prev);
+    float xs = normalize(vViewN).x;
+    float edge = mix(-1.45, 1.45, swapT);
+    float showNew = 1.0 - smoothstep(edge - 0.3, edge + 0.3, xs);
+    float line = exp(-pow((xs - edge) / 0.06, 2.0)) * (1.0 - swapT);
+    diffuseColor.rgb = mix(prev.rgb, diffuseColor.rgb, showNew) + vec3(0.35, 0.65, 1.0) * line * 0.25;
+  }
   if (landOn > 0.5) {
     float m = texture2D(landMask, vMapUv).r;
     if (m > 0.0) diffuseColor.rgb = mix(diffuseColor.rgb, sampleSmooth(landMap, vMapUv).rgb, m);
@@ -441,7 +480,7 @@ vec4 sampleSmooth(sampler2D tex, vec2 uv) {
 #endif`,
         );
     };
-    this.material.customProgramCacheKey = () => 'globe-land-colorfix-bicubic-cover-v5';
+    this.material.customProgramCacheKey = () => 'globe-land-colorfix-bicubic-cover-swap-v6';
   }
 
   spinBy(rad) {
@@ -467,6 +506,8 @@ vec4 sampleSmooth(sampler2D tex, vec2 uv) {
     this.idleFor += dt;
     this._stepKeys(dt);
     this._stepCover(dt);
+    this._stepEvents(dt);
+    this._stepSwap(dt);
     if (!this.dragging) {
       this.spin += this.spinVel * dt;
       this.spinVel *= Math.pow(0.08, dt); // momentum decays smoothly
@@ -491,6 +532,32 @@ vec4 sampleSmooth(sampler2D tex, vec2 uv) {
     this.renderer.render(this.sky.scene, this.sky.camera);
     this.renderer.clearDepth();
     this.renderer.render(this.scene, this.camera);
+  }
+
+  // ---------- Switching datasets ----------
+  // Call right after setTexture(new): the old texture stays on the globe and the new one
+  // sweeps across it (~0.8 s). done() runs when the old texture is no longer drawn.
+  swapFrom(prevTex, done) {
+    const u = this.uniforms;
+    this._swapDone?.(); // a swap still running: its old texture can go now
+    if (!prevTex || this.reducedMotion) { u.swapOn.value = 0; this._swapDone = null; done?.(); return; }
+    u.swapPrev.value = prevTex;
+    u.swapPrevVideo.value = prevTex.isVideoTexture ? 1 : 0;
+    u.swapOn.value = 1;
+    u.swapT.value = 0;
+    this._swapDone = done ?? (() => {});
+  }
+
+  _stepSwap(dt) {
+    const u = this.uniforms;
+    if (!u.swapOn.value) return;
+    u.swapT.value = Math.min(1, u.swapT.value + dt / 0.8);
+    if (u.swapT.value >= 1) {
+      u.swapOn.value = 0;
+      const done = this._swapDone;
+      this._swapDone = null;
+      done?.();
+    }
   }
 
   // ---------- Cover (start screen) ----------
