@@ -17,6 +17,7 @@ const OUT_FACTOR = 4;      // zoom out to 4x the default distance: the Earth shr
 // stills start to soften, but deeper zoom is worth it for exploring; at 4x it's blurry.
 const MIN_TEXELS_PER_PX = 0.25;
 const MAX_SPIN_VEL = 4;    // rad/s cap on fling speed
+const SHOW_DRIFT = 1.6 * DEG; // rad/s, guided show between camera moves
 // Arrow keys: held keys accelerate to a steady speed, release coasts to a stop.
 // (Speeds shrink with zoom so keyboard users can make fine moves when zoomed in.)
 const KEY_SPIN_MAX = 80 * DEG;    // rad/s at full speed, zoomed out
@@ -593,7 +594,14 @@ vec4 sampleSmooth(sampler2D tex, vec2 uv) {
       this.spinVel *= Math.pow(0.08, dt); // momentum decays smoothly
       if (Math.abs(this.spinVel) < 0.005) this.spinVel = 0;
       // Auto-spin only when idle and zoomed out, and ease it in rather than jumping.
-      if (this.idleFor > 4 && this.zoomFactor < 1.2 && !this.held) {
+      if (this.held) {
+        // Guided show: between camera moves the planet keeps drifting gently (eased in
+        // after each move), so it never looks frozen while the narrator talks.
+        if (!this.flight) {
+          this.driftFor = (this.driftFor ?? 0) + dt;
+          this.spin += SHOW_DRIFT * Math.min(1, this.driftFor / 1.5) * dt;
+        } else this.driftFor = 0;
+      } else if (this.idleFor > 4 && this.zoomFactor < 1.2) {
         const ease = Math.min(1, (this.idleFor - 4) / 2);
         this.spin += this.autoSpin * ease * dt;
       }

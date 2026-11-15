@@ -433,6 +433,7 @@ let switchToken = 0;
 async function selectDataset(ds) {
   const token = ++switchToken;
   for (const b of $('shelf').children) b.setAttribute('aria-pressed', String(b.dataset.id === ds.id));
+  if (current) sound.chime(); // a soft cue that the data is changing (not on the very first load)
   const loaded = await loadDataset(ds);
   if (token !== switchToken) return;
   if (!loaded) {
@@ -732,7 +733,8 @@ function bindExplore() {
 }
 
 function playCursor(p) {
-  if (!current || !p) { sound.cursor(null); return; }
+  // The guided show is driving: the cursor stays silent (it also would have soloed aerosols).
+  if (!current || !p || show.running) { sound.cursor(null); return; }
   const r = readingAt(p);
   sound.cursor(r.value01, p.x ?? 0);
   if (r.type !== undefined && r.type !== lastCursorType) sound.cursorType(r.type); // solo that aerosol

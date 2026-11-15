@@ -11,7 +11,8 @@ const SMOOTH_TAU = 0.5; // seconds
 const HIT_MIN = 0.12;     // below this: silence
 const THUNDER_AT = 1.6;   // above this: occasional thunder accent
 const MASTER_DB = -8;
-const DUCK_DB = -9;       // data sounds drop this much while the narrator speaks
+const DUCK_DB = -4;       // data sounds drop this much while the narrator speaks (kept light: the data is the show)
+const FOCUS_GAIN = 1.5;   // a layer playing on its own in the show is lifted this much
 // Layer names for focus(): pad (ocean chord / lightning storm rumble), melody, drums, and
 // the aerosol voices by type.
 export const AEROSOL_TYPES = ['smoke', 'dust', 'salt', 'sulfate'];
@@ -35,9 +36,13 @@ export class SoundEngine {
   constructor() {
     this.master = new Tone.Volume(MASTER_DB).toDestination();
     this.limiter = new Tone.Limiter(-1).connect(this.master);
+    // A shared room: a touch of reverb on every data layer makes them sit together instead
+    // of sounding like separate beeps. (The cursor stays dry, so its pitch reads clearly.)
+    this.room = new Tone.Reverb({ decay: 3.2, preDelay: 0.02, wet: 0.24 }).connect(this.limiter);
     // One gain per layer, so the guided show can play a single sound on its own (focus).
     this.bus = {};
-    for (const name of ['pad', 'melody', 'drums']) this.bus[name] = new Tone.Gain(1).connect(this.limiter);
+    for (const name of ['pad', 'melody', 'drums']) this.bus[name] = new Tone.Gain(1).connect(this.room);
+    this._buildEffects();
     this.aeroFocus = [1, 1, 1, 1];
 
     // Layer 1: pad. Warmer = brighter filter + higher chord.
@@ -101,7 +106,7 @@ export class SoundEngine {
 
   _buildAerosols() {
     const voice = () => {
-      const pan = new Tone.Panner(0).connect(this.limiter);
+      const pan = new Tone.Panner(0).connect(this.room);
       const gain = new Tone.Gain(0).connect(pan);
       return { pan, gain, level: new Smoothed(), solo: 1 };
     };
@@ -202,11 +207,79 @@ export class SoundEngine {
     return this.master.mute;
   }
 
-  // Play only these layers (names above); null brings everything back. Fades over ~0.6 s.
+  // Play only these layers (names above), lifted so they carry on their own; null brings
+  // everything back to normal. Fades over ~0.6 s.
   focus(layers = null) {
-    const on = (name) => !layers || layers.includes(name);
-    for (const [name, g] of Object.entries(this.bus)) g.gain.rampTo(on(name) ? 1 : 0, 0.6);
-    this.aeroFocus = AEROSOL_TYPES.map((t) => (on(t) ? 1 : 0));
+    const level = (name) => (!layers ? 1 : layers.includes(name) ? FOCUS_GAIN : 0);
+    for (const [name, g] of Object.entries(this.bus)) g.gain.rampTo(level(name), 0.6);
+    this.aeroFocus = AEROSOL_TYPES.map(level);
+  }
+
+  // ---------- Effects for the guided show and dataset switches ----------
+  // All synthesized here (no samples to license): a wide reverb of their own, a soft
+  // ambient drone under the show, a whoosh for camera moves and a chime for new datasets.
+  _buildEffects() {
+    this.fxRoom = new Tone.Reverb({ decay: 6, preDelay: 0.03, wet: 0.5 }).connect(this.limiter);
+    this.fx = new Tone.Gain(0.9).connect(this.fxRoom);
+
+    // Whoosh: pink noise through a band-pass that sweeps up and back down, panned across.
+    this.whooshPan = new Tone.Panner(0).connect(this.fx);
+    this.whooshGain = new Tone.Gain(0).connect(this.whooshPan);
+    this.whooshFilter = new Tone.Filter({ type: 'bandpass', frequency: 400, Q: 1.4 }).connect(this.whooshGain);
+    this.whooshNoise = new Tone.Noise('pink').connect(this.whooshFilter);
+    this.whooshNoise.volume.value = -6;
+
+    // Chime: three soft bell notes from the scale, rolled.
+    this.chimeSynth = new Tone.PolySynth(Tone.FMSynth, {
+      harmonicity: 2.01, modulationIndex: 6,
+      envelope: { attack: 0.004, decay: 2.2, sustain: 0, release: 2 },
+      modulationEnvelope: { attack: 0.004, decay: 0.8, sustain: 0, release: 0.8 },
+      volume: -20,
+    }).connect(this.fx);
+
+    // Drone: a low, slowly breathing chord on the scale (C, G, Bb, Eb), only during the show.
+    this.bedFilter = new Tone.Filter(380, 'lowpass').connect(this.fxRoom);
+    this.bedLfo = new Tone.LFO(0.045, 220, 620).connect(this.bedFilter.frequency);
+    this.bed = new Tone.PolySynth(Tone.Synth, {
+      oscillator: { type: 'fattriangle', count: 3, spread: 18 },
+      envelope: { attack: 5, decay: 1, sustain: 1, release: 6 },
+      volume: -24,
+    }).connect(this.bedFilter);
+    this.bedOn = false;
+  }
+
+  // A camera move: strength 0-1 (how far it goes), seconds = its length, dir = -1/1 (pan).
+  whoosh(seconds = 2, strength = 1, dir = 1) {
+    if (strength < 0.05) return;
+    const now = Tone.now();
+    const peak = now + seconds * 0.45;
+    const end = now + seconds;
+    if (this.whooshNoise.state !== 'started') this.whooshNoise.start();
+    const g = this.whooshGain.gain, f = this.whooshFilter.frequency, p = this.whooshPan.pan;
+    for (const param of [g, f, p]) param.cancelScheduledValues(now);
+    g.setValueAtTime(g.value, now);
+    g.linearRampToValueAtTime(0.5 * Math.min(1, 0.35 + strength), peak);
+    g.linearRampToValueAtTime(0, end);
+    f.setValueAtTime(260, now);
+    f.exponentialRampToValueAtTime(1800 + 1400 * strength, peak);
+    f.exponentialRampToValueAtTime(300, end);
+    p.setValueAtTime(-0.6 * dir, now);
+    p.linearRampToValueAtTime(0.6 * dir, end);
+  }
+
+  chime() {
+    const now = Tone.now();
+    ['C5', 'G5', 'Eb6'].forEach((n, i) => this.chimeSynth.triggerAttackRelease(n, '2n', now + i * 0.07, 0.5 - i * 0.1));
+  }
+
+  // The show's ambient drone.
+  setBed(on) {
+    if (on === this.bedOn) return;
+    this.bedOn = on;
+    if (on) {
+      if (this.bedLfo.state !== 'started') this.bedLfo.start();
+      this.bed.triggerAttack(['C2', 'G2', 'Bb2', 'Eb3']);
+    } else this.bed.releaseAll();
   }
 
   // Quieter data while the narrator speaks.

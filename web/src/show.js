@@ -7,7 +7,7 @@
 //   { focus: ['pad'] }            play only these sound layers (null = all; see sound.js)
 //   { fly: { lat, lon, zoom, seconds }, wait: false }   move the camera (waits unless wait: false)
 //   { say: 'ocean-1', text: '…' } a narration line (waits until it has been spoken)
-//   { pause: 1.5 }                wait this many seconds
+//   { pause: 1.5 }                wait this many seconds (a moment to just listen)
 //
 // Narration: a recorded file web/public/show/voice/<id>.mp3 when there is one, otherwise
 // the browser's built-in voice reads the text (a stand-in until recordings exist).
@@ -30,6 +30,7 @@ export class Show {
     if (this.running) return;
     this.running = true;
     this.ctx.globe.held = true;
+    this.ctx.sound.setBed(true);
     this.recordings = await this._recordings(steps);
     try {
       for (const step of steps) {
@@ -58,19 +59,27 @@ export class Show {
     globe.cancelFlight();
     sound.focus(null);
     sound.duck(false);
+    sound.setBed(false);
     this.ctx.caption(null);
     this.ctx.onEnd?.({ finished });
   }
 
   async _step(s) {
     const { ctx } = this;
-    if (s.dataset) await this._cancellable(ctx.selectDataset(s.dataset));
+    if (s.dataset) await this._cancellable(ctx.selectDataset(s.dataset)); // (chimes, in main.js)
     if (s.seek != null) ctx.seek(s.seek);
     if (s.speed != null) ctx.setSpeed(s.speed);
     if (s.play != null) ctx.setPlaying(s.play);
     if (s.focus !== undefined) ctx.sound.focus(s.focus);
     if (s.fly) {
       const arrived = ctx.globe.flyTo(s.fly);
+      // A whoosh as big as the move, panned the way the planet turns.
+      const f = ctx.globe.flight;
+      if (f) {
+        const turn = Math.abs(f.to.spin - f.from.spin) + Math.abs(f.to.tilt - f.from.tilt);
+        const strength = Math.min(1, turn / 2 + Math.abs(f.to.distance - f.from.distance) * 0.3);
+        ctx.sound.whoosh(f.seconds, strength, f.to.spin >= f.from.spin ? 1 : -1);
+      }
       if (s.wait !== false) await this._cancellable(arrived);
     }
     if (s.say) await this._say(s.say, s.text);
