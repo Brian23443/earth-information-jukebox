@@ -50,7 +50,9 @@ export const DATASETS = [
     format: (v) => `${Math.round(v * 100)}%`,
     sound: 'aerosols',
     // Order matches pipeline/aerosols.py TYPES.
-    typeNames: ['Smoke (black carbon)', 'Dust', 'Sea salt', 'Sulfate'],
+    typeNames: ['Smoke (black carbon)', 'Dust', 'Sea salt', 'Sulfate'], // spoken and described
+    typeShort: ['Smoke', 'Dust', 'Sea salt', 'Sulfate'], // on screen
+    typeColors: ['#d25e45', '#c19adc', '#85aaa9', '#53dc34'], // NASA's colorbar swatches
     // Discrete swatches (NASA's colorbar), not a gradient.
     legend: {
       label: 'Smoke · Dust · Sea salt · Sulfate',

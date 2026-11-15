@@ -578,6 +578,8 @@ async function selectDataset(ds, { startAt = 0 } = {}) {
     '<br>Sky: NASA SVS star map and LRO Moon; Sun and planets ' +
     '<a href="https://www.solarsystemscope.com/textures/" target="_blank" rel="noopener">Solar System Scope</a> (CC BY 4.0).';
   updateLegend(ds);
+  buildMix(ds);
+  steady.key = steady.pendingKey = null; // a new dataset's first reading shows at once
   const dates = loaded.frames?.dates;
   $('time-start').textContent = dates ? formatDay(dates[0]) : '';
   $('time-end').textContent = dates ? formatDay(dates[1]) : '';
@@ -847,6 +849,7 @@ function tick(now) {
     if (featureClock >= 0.1) { // 10 Hz is plenty after smoothing
       const features = extractor.extract(globe, frame);
       features.classes = extractor.extractClasses(globe, frame); // aerosols only (else null)
+      updateMix(features.classes);
       const pr = current.ds.padRange;
       if (pr) {
         const meanValue = current.summary.meta.vmin + features.mean01 * current.summary.range;
@@ -955,7 +958,11 @@ function readingAt(p) {
       // Aerosols: name the dominant type and how thick it is.
       const names = current.ds.typeNames ?? ['Type 1', 'Type 2', 'Type 3', 'Type 4'];
       const amount = g.strength > 0.5 ? 'heavy' : g.strength > 0.2 ? 'moderate' : 'light';
-      return { text: `${names[g.type]} · ${amount}`, value01: g.strength, type: g.type };
+      return {
+        text: `${names[g.type]} · ${amount}`, // full, for speech
+        short: current.ds.typeShort?.[g.type] ?? names[g.type], amount, // on screen
+        value01: g.strength, type: g.type,
+      };
     }
     if (g && g.noData && current.summary.classes) return { text: 'Clear air', value01: null };
     if (g) {
@@ -976,12 +983,58 @@ function describe(p) {
   return `${current.ds.title}, ${displayDate()}. ${formatPlace(p)}: ${readingAt(p).text}.`;
 }
 
+// Aerosols: four bars, one per type, sized by how much of it is in view (~1 = a typical
+// amount fills half the bar). The same levels set each type's volume (sound.js), so the
+// bars move with what you hear. Widths ease via CSS.
+function buildMix(ds) {
+  const mix = $('readout-mix');
+  mix.hidden = !ds.typeShort;
+  if (!ds.typeShort) { mix.innerHTML = ''; return; }
+  mix.innerHTML = ds.typeShort.map((name, k) =>
+    `<div class="mix-row"><span class="mix-name">${name}</span><span class="mix-track"><span class="mix-fill" style="background:${ds.typeColors[k]}"></span></span></div>`).join('');
+}
+function updateMix(classes) {
+  if (!classes || $('readout-mix').hidden) return;
+  const fills = $('readout-mix').querySelectorAll('.mix-fill');
+  classes.forEach((c, k) => {
+    if (fills[k]) fills[k].style.width = `${Math.round(Math.min(1, Math.max(0, c.level) / 2) * 100)}%`;
+  });
+}
+
+// Category readouts (aerosols) change only once a new reading has held for a moment, and
+// fade across: at plume edges the strongest type flickers between neighbours, and the big
+// label used to flip several times a second. Numbers (temperatures) update directly.
+const READOUT_HOLD_MS = 800;
+const steady = { key: null, pendingKey: null, since: 0 };
+function showReadout(key, value, sub) {
+  const now = performance.now();
+  if (key === steady.key) { steady.pendingKey = null; $('readout-place').textContent = sub; return; }
+  if (key !== steady.pendingKey) { steady.pendingKey = key; steady.since = now; }
+  if (steady.key !== null && now - steady.since < READOUT_HOLD_MS) return;
+  steady.key = key;
+  const el = $('readout');
+  el.classList.add('swapping');
+  setTimeout(() => {
+    $('readout-value').textContent = value;
+    $('readout-place').textContent = sub;
+    el.classList.remove('swapping');
+  }, steady.key === null ? 0 : 140);
+}
+
 function updateReadout() {
   if (!current) return;
   const p = hover ?? globe.center();
   $('readout-source').textContent = hover ? 'Cursor' : 'Center';
   $('readout-date').textContent = displayDate() || '—';
-  $('readout-value').textContent = readingAt(p).text;
-  $('readout-place').textContent = formatPlace(p);
+  const r = readingAt(p);
+  const place = formatPlace(p);
+  if (current.summary.classes) {
+    const amount = r.amount ? r.amount[0].toUpperCase() + r.amount.slice(1) : null;
+    showReadout(r.short ? `${r.type}|${r.amount}` : r.text, r.short ?? r.text, amount ? `${amount} · ${place}` : place);
+  } else {
+    steady.key = steady.pendingKey = null;
+    $('readout-value').textContent = r.text;
+    $('readout-place').textContent = place;
+  }
   if (document.activeElement === $('globe') && !hover) announcer.say(describe(p));
 }
