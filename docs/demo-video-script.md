@@ -9,18 +9,14 @@ The demo is a product-style walkthrough of the live site: a screen recording fra
 
 ## Narration
 
-Use the same voice as the guided show. Each line has a time slot, so keep the pace natural and don't add pauses.
-
 | # | Time | On screen | Line |
 | --- | --- | --- | --- |
-| 1 | 0:00–0:04 | Cover page | We're Team Waveform, and this is the Earth Information Jukebox. |
-| 2 | 0:04–0:09 | "Explore on my own" clicked; the ocean data sweeps across the globe | NASA's Earth data is made to be seen. We made it heard, for blind and low-vision people first. |
-| 3 | 0:09–0:13 | The cursor moves from the North Pacific to the equator; the readout climbs from about 12 °C to 28 °C | Point at the ocean: the warmer the water, the higher the note. |
-| 4 | 0:13–0:17 | Switch to Lightning; storms over Africa | Lightning seen from the Space Station plays as drums. |
-| 5 | 0:17–0:22 | Switch to Aerosols; Saharan dust and African smoke | Dust, smoke, sea salt and sulfates each get their own sound. |
-| 6 | 0:22–0:28 | The guided show with its captions, then the end card | With a narrated tour, captions and full keyboard support, anyone can hear our planet change. |
-
-Actual times in the final cut: line 2 runs 0:00.4–0:07.8, line 3 0:08.0–0:12.0, line 4 0:12.4–0:16.2, line 5 0:16.6–0:21.7 and line 6 0:22.0–0:28.8.
+| 1 | (not used) | Cover page | We're Team Waveform, and this is the Earth Information Jukebox. |
+| 2 | 0:00–0:08 | Cover, then "Explore on my own" clicked; the ocean data sweeps across the globe | NASA's Earth data is made to be seen. We made it heard, for blind and low-vision people first. |
+| 3 | 0:08–0:12 | The cursor moves from the North Pacific to the equator; the readout climbs from about 12 °C to 28 °C | Point at the ocean: the warmer the water, the higher the note. |
+| 4 | 0:12–0:16 | Switch to Lightning; storms over Africa | Lightning seen from the Space Station plays as drums. |
+| 5 | 0:16–0:22 | Switch to Aerosols; Saharan dust and African smoke | Dust, smoke, sea salt and sulfates each get their own sound. |
+| 6 | 0:22–0:29 | The guided show with its captions, then the end card | With a narrated tour, captions and full keyboard support, anyone can hear our planet change. |
 
 The recordings are copied to `submission/voice/`. The script finds each one by its line number (`1-…`) or by the start of the line in the file name, as the voice tools export them.
 
