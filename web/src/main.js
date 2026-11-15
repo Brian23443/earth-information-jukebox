@@ -141,8 +141,7 @@ const show = new Show({
   },
   seek(f) {
     $('scrub').value = String(Math.round(f * 1000));
-    if (video?.duration) video.currentTime = f * video.duration;
-    if (current) frame = f * current.summary.frames;
+    seekTo(f);
   },
   setPlaying(p) {
     if (detail.on) exitDetail({ resume: p });
@@ -368,7 +367,7 @@ async function useVideo(url, res, { syncFrom = null, swap = null } = {}) {
       // Open at the requested moment: seek before the first picture is shown.
       if (v.readyState < 1) await Promise.race([once(v, 'loadedmetadata'), timeout(6000)]);
       if (v.duration) {
-        v.currentTime = swap.startAt * v.duration;
+        v.currentTime = Math.min(swap.startAt * v.duration, v.duration - END_GAP_S);
         await Promise.race([once(v, 'seeked'), timeout(6000)]);
       }
     }
@@ -627,10 +626,22 @@ $('speed').addEventListener('change', (e) => {
   speed = Number(e.target.value);
   if (video) video.playbackRate = speed;
 });
+// Seek to fraction f of the timeline. Never land exactly on the end: a looping video parked
+// at its last moment stops there instead of wrapping, so stay a hair short and let it loop.
+const END_GAP_S = 0.05;
+function seekTo(f) {
+  f = Math.min(1, Math.max(0, f));
+  if (video?.duration) video.currentTime = Math.min(f * video.duration, video.duration - END_GAP_S);
+  if (current) frame = Math.min(f, 0.9999) * current.summary.frames;
+}
+// Hold the slider still only while it's being dragged (it keeps focus after release, and
+// a focused slider that stopped following playback looked frozen at the end).
+let scrubbing = false;
+$('scrub').addEventListener('pointerdown', () => { scrubbing = true; });
+addEventListener('pointerup', () => { scrubbing = false; });
+addEventListener('pointercancel', () => { scrubbing = false; });
 $('scrub').addEventListener('input', (e) => {
-  const t = Number(e.target.value) / 1000;
-  if (video?.duration) video.currentTime = t * video.duration;
-  if (current) frame = t * current.summary.frames;
+  seekTo(Number(e.target.value) / 1000);
   if (detail.on) enterDetail(); // re-snap to the keyframe nearest the new time
 });
 $('spin-left').addEventListener('click', () => globe.spinBy(0.35 / Math.sqrt(Math.max(1, globe.zoomFactor))));
@@ -868,7 +879,7 @@ function tick(now) {
       updateReadout();
       writeDebug(features);
     }
-    if (document.activeElement !== $('scrub')) {
+    if (!scrubbing) {
       $('scrub').value = String(Math.round((frame / summary.frames) * 1000));
     }
     // Filled part of the timeline track (Chrome/Safari; Firefox uses ::-moz-range-progress)
