@@ -126,7 +126,9 @@ button, select, input { font: inherit; color: inherit; }
 .app.intro { opacity: 0; }
 .app > * { pointer-events: auto; }
 .app .meta, .app .bottom { pointer-events: none; }
-.app .bottom > *, .app .meta > * { pointer-events: auto; }
+/* Only real controls catch clicks: not the empty full-width rows that hold them (the
+   legend/credit row used to sit over the show's caption bar on some window sizes). */
+.app .bottom > :not(.meta), .app .meta > * { pointer-events: auto; }
 
 .topbar {
   position: absolute; top: var(--gap); left: var(--gap); right: var(--gap);
@@ -346,8 +348,10 @@ input[type='range']::-moz-range-thumb { width: 10px; height: 10px; border-radius
   position: fixed; left: 50%; transform: translateX(-50%);
   bottom: calc(118px + var(--safe-b)); width: min(820px, calc(100% - 32px));
   display: flex; flex-direction: column; align-items: center; gap: 10px;
-  pointer-events: auto; text-align: center;
+  pointer-events: none; text-align: center; z-index: 5; /* above the bottom controls */
 }
+.show-bar > * { pointer-events: auto; }
+.show-caption { pointer-events: none; }
 .show-caption {
   margin: 0; font-size: 21px; font-weight: 500; line-height: 1.4; color: #fff; min-height: 1.4em; text-wrap: balance;
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.9), 0 0 14px rgba(0, 0, 0, 0.75), 0 0 28px rgba(0, 0, 0, 0.5);
