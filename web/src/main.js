@@ -130,7 +130,7 @@ async function preloadOtherDatasets() {
       if (night) globe.renderer.initTexture(night);
     }
     if (l.land) {
-      const tex = await Promise.all([cachedStill(l.land.image), cachedStill(l.land.mask)]).catch(() => []);
+      const tex = await Promise.all([cachedStill(l.land.image), cachedStill(l.land.mask, { data: true })]).catch(() => []);
       tex.forEach((t) => globe.renderer.initTexture(t));
     }
     if (l.videoUrl) fetch(quality.preferHigh && l.videoUrlHigh ? l.videoUrlHigh : l.videoUrl, { headers: { Range: 'bytes=0-1500000' } }).catch(() => {}); // warm the first seconds
@@ -169,9 +169,9 @@ const quality = { res: null, probeMbps: null, note: '', locked: false, token: 0,
 // Still images (night maps, land layers) stay on the GPU for the visit: decoded once, off
 // the main thread, and reused on every switch.
 const stillCache = new Map();
-function cachedStill(url) {
+function cachedStill(url, opts) {
   if (!stillCache.has(url)) {
-    const p = loadStill(url);
+    const p = loadStill(url, opts);
     stillCache.set(url, p);
     p.catch(() => stillCache.delete(url));
   }
@@ -440,7 +440,7 @@ async function selectDataset(ds) {
   // Sharp static land over the video (cached; loads in the background the first time).
   globe.setLandLayer(null, null);
   if (loaded.land && params.get('land') !== '0') { // ?land=0 turns it off for A/B tests
-    Promise.all([cachedStill(loaded.land.image), cachedStill(loaded.land.mask)])
+    Promise.all([cachedStill(loaded.land.image), cachedStill(loaded.land.mask, { data: true })])
       .then(([land, mask]) => { if (current === loaded && token === switchToken) globe.setLandLayer(land, mask); })
       .catch((err) => console.warn('[land] could not load land layer', err));
   }
@@ -617,7 +617,10 @@ function exitDetail({ resume }) {
 }
 
 // Decode off the main thread; shrink only if the GPU can't hold the full size.
-async function loadStill(url) {
+// Colour images are marked sRGB here, before anything can upload them: the GPU format is
+// fixed at upload, and a map preloaded as plain data showed washed out (grey-blue).
+// Masks pass { data: true }.
+async function loadStill(url, { data = false } = {}) {
   const blob = await (await fetch(url)).blob();
   const probe = await createImageBitmap(blob);
   const max = globe.maxTextureSize;
@@ -628,6 +631,7 @@ async function loadStill(url) {
     ...(scale < 1 ? { resizeWidth: Math.floor(probe.width * scale), resizeHeight: Math.floor(probe.height * scale) } : {}),
   });
   const tex = new THREE.Texture(bitmap);
+  tex.colorSpace = data ? THREE.NoColorSpace : THREE.SRGBColorSpace;
   tex.flipY = false; // already flipped during decode
   tex.generateMipmaps = true;
   tex.minFilter = THREE.LinearMipmapLinearFilter;

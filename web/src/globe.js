@@ -135,7 +135,12 @@ export class Globe {
   // colorFix: 12 numbers (3x4 matrix, display/sRGB space) that map this texture's colors onto
   // NASA's frames. Used for the playback videos; stills pass nothing.
   setTexture(texture, colorFix = null) {
-    texture.colorSpace = THREE.SRGBColorSpace;
+    if (texture.colorSpace !== THREE.SRGBColorSpace) {
+      texture.colorSpace = THREE.SRGBColorSpace;
+      // Re-upload: the GPU format depends on the colour space. (Videos re-upload every
+      // frame anyway, and forcing one before a frame exists logs "no video".)
+      if (!texture.isVideoTexture) texture.needsUpdate = true;
+    }
     texture.anisotropy = this.renderer.capabilities.getMaxAnisotropy();
     this.material.map = texture;
     this.material.needsUpdate = true;
@@ -153,9 +158,9 @@ export class Globe {
   setLandLayer(land, mask) {
     const u = this.uniforms;
     if (land && mask) {
-      land.colorSpace = THREE.SRGBColorSpace;
+      if (land.colorSpace !== THREE.SRGBColorSpace) { land.colorSpace = THREE.SRGBColorSpace; land.needsUpdate = true; }
+      if (mask.colorSpace !== THREE.NoColorSpace) { mask.colorSpace = THREE.NoColorSpace; mask.needsUpdate = true; }
       land.anisotropy = this.renderer.capabilities.getMaxAnisotropy();
-      mask.colorSpace = THREE.NoColorSpace;
       u.landMap.value = land;
       u.landMask.value = mask;
       u.landOn.value = 1;
