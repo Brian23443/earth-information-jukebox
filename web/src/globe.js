@@ -492,22 +492,25 @@ vec4 sampleSmooth(sampler2D tex, vec2 uv) {
       col = mix(prev.rgb, diffuseColor.rgb, showNew) + blue * exp(-pow((n.x - edge) / 0.06, 2.0)) * 0.25 * fadeOut;
     } else if (swapStyle < 1.5) {
       // Corruption bloom: a blue glow ignites at the centre of the view and spreads over the
-      // planet with a ragged, glitching front; old data just ahead of it is tinted and
-      // speckled, and the blue drains out of the new data behind it.
+      // planet. Its front is a sharp, ragged line of light; thin glowing veins creep just
+      // ahead of it through the old data; a faint blue fades quickly behind it.
       vec3 o = normalize(vObjPos);
       float d = acos(clamp(n.z, -1.0, 1.0)); // 0 at the centre of the view, 1.57 at the edge
-      float rag = (gFbm(o * 4.0) - 0.5) * 0.55 + (gNoise(o * 38.0) - 0.5) * 0.12;
-      float dn = d + rag;
-      float R = mix(-0.35, 2.15, t);
-      showNew = 1.0 - smoothstep(R - 0.06, R + 0.06, dn);
-      float front = exp(-pow((dn - R) / 0.06, 2.0));
-      float ahead = (1.0 - smoothstep(R, R + 0.4, dn)) * (1.0 - showNew);
-      float speck = step(0.82, gHash(floor(o * 90.0) + floor(t * 24.0))) * ahead;
-      float wash = (1.0 - smoothstep(0.0, 0.8, R - dn)) * showNew;
+      float dn = d + (gFbm(o * 4.0) - 0.5) * 0.5;
+      float R = mix(-0.3, 2.1, t);
+      float aa = max(fwidth(dn), 1e-4); // ~1 screen pixel: crisp at any size
+      showNew = 1.0 - smoothstep(R - aa, R + aa, dn);
+      float ahead = (1.0 - smoothstep(R, R + 0.22, dn)) * (1.0 - showNew);
+      // Veins: thin ridges of noise, lit only just ahead of the front.
+      float v = 1.0 - abs(gFbm(o * 9.0 + 3.7) * 2.0 - 1.0);
+      float vaa = max(fwidth(v), 1e-4);
+      float vein = smoothstep(0.93 - vaa, 0.93 + vaa, v) * ahead;
+      float core = 1.0 - smoothstep(0.0, 1.5 * aa, abs(dn - R)); // the line itself
+      float halo = exp(-abs(dn - R) / 0.035);                        // its glow
+      float wash = (1.0 - smoothstep(0.0, 0.18, R - dn)) * showNew;
       col = mix(prev.rgb, diffuseColor.rgb, showNew);
-      vec3 tinted = col * vec3(0.45, 0.7, 1.35) + vec3(0.0, 0.03, 0.12);
-      col = mix(col, tinted, clamp(ahead * 0.55 + wash * 0.45, 0.0, 1.0) * fadeOut);
-      col += blue * (front * 0.85 + speck * 0.45) * fadeOut;
+      col = mix(col, col * vec3(0.55, 0.8, 1.3), (wash * 0.35 + ahead * 0.2) * fadeOut);
+      col += (vec3(0.75, 0.9, 1.0) * core + blue * (halo * 0.55 + vein * 0.8)) * fadeOut;
     } else if (swapStyle < 2.5) {
       // Satellite scan: a bright line passes from the north pole to the south, laying the
       // new data down behind it, with a short afterglow.
