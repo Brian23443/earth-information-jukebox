@@ -13,6 +13,13 @@ const THUNDER_AT = 1.6;   // above this: occasional thunder accent
 const MASTER_DB = -8;
 const DUCK_DB = -4;       // data sounds drop this much while the narrator speaks (kept light: the data is the show)
 const FOCUS_GAIN = 1.5;   // a layer playing on its own in the show is lifted this much
+// LEVELS: every sound's volume is set so that, at a typical amount of data, its loudest
+// moments (90th percentile of 400 ms windows, before the reverb) land in a common range:
+// data layers -23 to -29 dB, show effects (whoosh, chime) about -30, the background drone
+// about -30, the temperature tone about -21 (it carries the ocean lesson). Bursty sounds
+// (smoke crackle, sulfate bells) are judged by those loud moments, not their average,
+// which makes them look far quieter than they sound. Re-measure after changing a voice.
+
 // Layer names for focus(): pad (ocean chord / lightning storm rumble), melody, drums, probe
 // (the guided show's temperature tone), and the aerosol voices by type.
 export const AEROSOL_TYPES = ['smoke', 'dust', 'salt', 'sulfate'];
@@ -116,7 +123,7 @@ export class SoundEngine {
     // Smoke (black carbon): crackling, like a fire.
     const smoke = voice();
     smoke.filter = new Tone.Filter(2500, 'highpass').connect(smoke.gain);
-    smoke.synth = new Tone.NoiseSynth({ noise: { type: 'white' }, envelope: { attack: 0.001, decay: 0.03, sustain: 0 }, volume: -4 }).connect(smoke.filter);
+    smoke.synth = new Tone.NoiseSynth({ noise: { type: 'white' }, envelope: { attack: 0.001, decay: 0.03, sustain: 0 }, volume: 8 }).connect(smoke.filter);
     // Dust: a low drone (C2 + G2, filtered saws).
     const dust = voice();
     dust.filter = new Tone.Filter(320, 'lowpass').connect(dust.gain);
@@ -124,12 +131,11 @@ export class SoundEngine {
     dust.oscs.forEach((o) => { o.volume.value = -14; o.connect(dust.filter); });
     // Sea salt: airy shimmer that swells like surf.
     const salt = voice();
-    // (Measured at a typical amount it sat ~29 dB below the dust drone, nearly inaudible:
-    // lifted ~15 dB and opened down to 2.6 kHz so it reads as surf, not a faint hiss.)
+    // (Opened down to 2.6 kHz so it reads as surf, not a faint hiss.)
     salt.filter = new Tone.Filter(2600, 'highpass').connect(salt.gain);
     salt.trem = new Tone.Tremolo(0.25, 0.7).connect(salt.filter).start();
     salt.noise = new Tone.Noise('pink');
-    salt.noise.volume.value = -2;
+    salt.noise.volume.value = 8;
     salt.noise.connect(salt.trem);
     // Sulfates: bell tones on the pentatonic scale.
     const sulfate = voice();
@@ -137,7 +143,7 @@ export class SoundEngine {
       harmonicity: 3.01, modulationIndex: 12,
       envelope: { attack: 0.002, decay: 1.4, sustain: 0, release: 1.2 },
       modulationEnvelope: { attack: 0.002, decay: 0.6, sustain: 0, release: 0.6 },
-      volume: -14,
+      volume: 4, // levels: see LEVELS note at the top
     }).connect(sulfate.gain);
     this.aero = [smoke, dust, salt, sulfate];
     this.aeroLoop = new Tone.Loop((time) => this._playAerosols(time), '16n');
@@ -230,7 +236,7 @@ export class SoundEngine {
       oscillator: { type: 'fatsine', count: 2, spread: 8 },
       portamento: 0.22,
       envelope: { attack: 0.6, decay: 0.2, sustain: 1, release: 1.4 },
-      volume: -9,
+      volume: -15,
     }).connect(this.probeVibrato);
     this.probeOn = false;
     this.probeDegree = null;
@@ -271,14 +277,14 @@ export class SoundEngine {
     this.whooshGain = new Tone.Gain(0).connect(this.whooshPan);
     this.whooshFilter = new Tone.Filter({ type: 'bandpass', frequency: 400, Q: 1.4 }).connect(this.whooshGain);
     this.whooshNoise = new Tone.Noise('pink').connect(this.whooshFilter);
-    this.whooshNoise.volume.value = -6;
+    this.whooshNoise.volume.value = 7;
 
     // Chime: three soft bell notes from the scale, rolled.
     this.chimeSynth = new Tone.PolySynth(Tone.FMSynth, {
       harmonicity: 2.01, modulationIndex: 6,
       envelope: { attack: 0.004, decay: 2.2, sustain: 0, release: 2 },
       modulationEnvelope: { attack: 0.004, decay: 0.8, sustain: 0, release: 0.8 },
-      volume: -20,
+      volume: -8,
     }).connect(this.fx);
 
     // Drone: a low, slowly breathing chord on the scale (C, G, Bb, Eb), only during the show.
@@ -287,7 +293,7 @@ export class SoundEngine {
     this.bed = new Tone.PolySynth(Tone.Synth, {
       oscillator: { type: 'fattriangle', count: 3, spread: 18 },
       envelope: { attack: 5, decay: 1, sustain: 1, release: 6 },
-      volume: -24,
+      volume: -28,
     }).connect(this.bedFilter);
     this.bedOn = false;
   }
