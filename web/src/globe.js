@@ -649,7 +649,7 @@ vec4 sampleSmooth(sampler2D tex, vec2 uv) {
     let ds = sv.spin - this.spin;
     ds -= Math.round(ds / turn) * turn; // the short way round
     const active = this.dragging || this.keysHeld.size > 0 || this.keySpinVel || this.keyTiltVel
-      || Math.abs(this.spinVel) > 0.02 || performance.now() - (this.userAt ?? -1e9) < 500;
+      || Math.abs(this.spinVel) > 0.02 || performance.now() - (this.userAt ?? -1e9) < 120; // (wheel/buttons come in bursts)
     if (active) {
       this.peeking = true;
       this.peekOffset = null;
@@ -1011,6 +1011,8 @@ vec4 sampleSmooth(sampler2D tex, vec2 uv) {
           this.spinVel = 0;
         }
       }
+      // During the show, letting go hands straight back to it: no fling to wait out.
+      if (this.held) this.spinVel = 0;
       this.dragging = false;
       last = null;
       pinchDist = 0;
