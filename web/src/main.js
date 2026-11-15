@@ -21,7 +21,7 @@ let playing = true;
 let speed = 1;
 let video = null, videoTexture = null;
 let hover = null;          // {lat, lon, x} under the mouse, or null
-let keyboardMovedAt = -1e9; // last arrow/zoom key, so the crosshair voice only plays after user moves
+let keyboardMovedAt = -1e9; // last arrow/zoom key, so the center voice only plays after the user moves
 
 // Detail-view state
 const detail = { on: false, keyframe: null, wasPlaying: false, resumedZoomed: false, texture: null, full: false, token: 0 };
@@ -518,7 +518,7 @@ async function loadStill(url) {
 function showBadge(text) { $('detail-badge').textContent = text; $('detail-badge').hidden = false; }
 function hideBadge() { $('detail-badge').hidden = true; }
 
-// ---------- Explore: hover with the mouse, or the keyboard crosshair ----------
+// ---------- Explore: hover with the mouse, or the center of the view for keyboard users ----------
 function bindExplore() {
   const el = $('globe');
   el.addEventListener('pointermove', (e) => {
@@ -529,16 +529,13 @@ function bindExplore() {
     updateReadout();
   });
   el.addEventListener('pointerleave', () => { hover = null; sound.cursor(null); updateReadout(); });
-  el.addEventListener('pointerdown', () => { hover = null; el.classList.remove('kbd'); });
-  // The center marker appears only for keyboard steering; any mouse movement hides it.
-  window.addEventListener('pointermove', () => el.classList.remove('kbd'), { passive: true });
+  el.addEventListener('pointerdown', () => { hover = null; });
   el.addEventListener('keydown', (e) => {
     if (e.key.startsWith('Arrow') || '+=-_'.includes(e.key)) {
       keyboardMovedAt = performance.now();
-      el.classList.add('kbd');
       hover = null; // keyboard steering: read out the center, not where the mouse last was
     }
-    // Hold Shift: read the value under the crosshair (or cursor) aloud.
+    // Hold Shift: read the value at the center of the view (or under the cursor) aloud.
     if (e.key === 'Shift' && !e.repeat && current) speak(describe(hover ?? globe.center()));
   });
 }
@@ -584,7 +581,7 @@ function tick(now) {
         features.padMean01 = Math.min(1, Math.max(0, (meanValue - pr[0]) / (pr[1] - pr[0])));
       }
       sound.update(features, featureClock);
-      // Keyboard users: the crosshair plays for a few seconds after they move the globe.
+      // Keyboard users: the center of the view plays for a few seconds after they move the globe.
       if (globe.keyMoving) keyboardMovedAt = now; // still turning (held key or coasting)
       if (!hover && document.activeElement === $('globe') && now - keyboardMovedAt < 3000) {
         playCursor(globe.center());

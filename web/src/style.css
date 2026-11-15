@@ -61,18 +61,6 @@ button, select, input { font: inherit; color: inherit; }
   color: rgba(255, 255, 255, 0.6); text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9);
 }
 
-/* Center marker: only for keyboard users (it's what the crosshair voice plays). */
-.reticle {
-  position: absolute; left: 50%; top: 50%; width: 28px; height: 28px; margin: -14px 0 0 -14px;
-  pointer-events: none; opacity: 0; transition: opacity 0.2s;
-}
-.reticle span { position: absolute; background: rgba(255, 255, 255, 0.85); border-radius: 1px; }
-.reticle span:nth-child(1) { left: 13px; top: 0; width: 2px; height: 8px; }
-.reticle span:nth-child(2) { left: 13px; bottom: 0; width: 2px; height: 8px; }
-.reticle span:nth-child(3) { top: 13px; left: 0; width: 8px; height: 2px; }
-.reticle span:nth-child(4) { top: 13px; right: 0; width: 8px; height: 2px; }
-/* Shown only while someone is steering with the keyboard (main.js toggles .kbd). */
-.globe.kbd:focus .reticle { opacity: 1; }
 
 /* ---------- Glass ---------- */
 .glass {

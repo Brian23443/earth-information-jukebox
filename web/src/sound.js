@@ -71,7 +71,7 @@ export class SoundEngine {
     this.drumLoop = new Tone.Loop((time) => this._playDrums(time), '16n');
     this.lastThunder = 0;
 
-    // Layer 4: explore cursor. Plays the value under the mouse (or keyboard crosshair).
+    // Layer 4: explore cursor. Plays the value under the mouse (or the view center for keyboard users).
     this.cursorPan = new Tone.Panner(0).connect(this.limiter);
     this.cursorSynth = new Tone.Synth({
       oscillator: { type: 'sine' },
