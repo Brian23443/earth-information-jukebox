@@ -20,3 +20,6 @@ web/public/data/
 web/public/sky/
 web/public/cover/
 web/public/show/voice/*.mp3
+
+# Demo video renders and raw takes (large; the final video goes to YouTube)
+submission/

@@ -110,7 +110,7 @@ async function begin({ withShow }) {
   await sound.start();
   // Development only (npm run dev): start muted. The mute button still unmutes.
   // Production builds are unaffected. Set DEV_START_MUTED to false to hear it by default.
-  if (import.meta.env.DEV && DEV_START_MUTED) setMuted(true);
+  if (import.meta.env.DEV && DEV_START_MUTED && !demoHQ) setMuted(true); // recording keeps the sound
   $('app').classList.add('intro');
   $('app').hidden = false;
   globe.onZoom = onZoom;
@@ -276,6 +276,8 @@ const PROBE_TIMEOUT_MS = 10_000;
 const STALLS_TO_DOWNGRADE = 2;
 const STALL_WINDOW_MS = 30_000;
 const params = new URLSearchParams(location.search);
+// ?video=6840 is the demo-recording mode: the sharpest file of everything from the start.
+const demoHQ = params.get('video') === '6840';
 const quality = { res: null, probeMbps: null, note: '', locked: false, token: 0, preferHigh: false };
 
 // Still images (night maps, land layers) stay on the GPU for the visit: decoded once, off
@@ -296,6 +298,7 @@ const NIGHT_8K_ZOOM = 1.4;
 function nightTexture(ev) {
   if (!ev.night) return cachedStill(ev.base);
   const big = ev.night[8192];
+  if (demoHQ && big) return cachedStill(big);
   if (big && stillCache.has(big)) return stillCache.get(big).catch(() => cachedStill(ev.night[4096] ?? big));
   return cachedStill(ev.night[4096] ?? big);
 }
@@ -547,7 +550,7 @@ async function selectDataset(ds, { startAt = 0 } = {}) {
         console.warn(`[video] ?video=6840: ${quality.note}; using the normal videos`);
       }
       // Once a visit has shown the connection handles 4096, start there.
-      const startHigh = loaded.videoUrlHigh && (params.get('video') === '4096' || (quality.preferHigh && !quality.locked));
+      const startHigh = loaded.videoUrlHigh && (params.get('video') === '4096' || demoHQ || (quality.preferHigh && !quality.locked));
       const ok = await useVideo(startHigh ? loaded.videoUrlHigh : loaded.videoUrl, startHigh ? 4096 : 2048, { swap });
       if (!ok) return; // superseded by another switch
       if (!startHigh) maybeUpgrade(loaded); // runs in the background
