@@ -2,8 +2,7 @@
 
     python pipeline/check_events.py [--old data/work/lightning_events_v1.bin]
 
-For sample frames, draws every flash the site would show (shapes from the atlas, small
-flashes as round dots) and compares the lit pixels with NASA's yellow pixels in the same
+For sample frames, draws every dot the site would show and compares the lit pixels with NASA's yellow pixels in the same
 movie frame:
   recall     share of NASA's lit pixels that we light
   precision  share of our lit pixels that NASA lit too
@@ -15,7 +14,6 @@ import json
 import subprocess
 
 import numpy as np
-from PIL import Image
 
 from manifest import DATASETS, OUT
 from media import movie_path, probe_movie
@@ -47,14 +45,13 @@ def score(drawn, truth):
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--old")
+    p.add_argument("--rscale", type=float, default=1.0, help="try drawing dots this much larger")
     a = p.parse_args()
     ds = DATASETS["lightning"]
     out = OUT / "lightning"
     meta = json.loads((out / "events.json").read_text())
     rec = np.fromfile(out / "events.bin", dtype=[("cx4", "<u2"), ("cy4", "<u2"), ("start", "<u2"), ("end", "<u2"),
-                                                  ("w", "u1"), ("h", "u1"), ("r10", "u1"), ("peak", "u1"),
-                                                  ("ax", "<u2"), ("ay", "<u2")])
-    atlas = np.asarray(Image.open(out / "shapes.png"))
+                                                  ("r10", "u1"), ("peak", "u1")])
     old = None
     if a.old:
         old = np.fromfile(a.old, dtype=[("x", "<u2"), ("y", "<u2"), ("start", "<u2"), ("end", "<u2"), ("r", "u1")])
@@ -68,18 +65,7 @@ def main():
         truth = flash_mask(movie_frame(path, f * every, w, h), ds["flash_rgb"])
         new = np.zeros((h, w), bool)
         for e in rec[(rec["start"] <= f) & (rec["end"] > f)]:
-            cx, cy = e["cx4"] / 4, e["cy4"] / 4
-            if e["w"]:
-                ew, eh, sc = int(e["w"]), int(e["h"]), int(e["peak"])
-                x0, y0 = int(round(cx - ew * sc / 2)), int(round(cy - eh * sc / 2))
-                patch = atlas[e["ay"]:e["ay"] + eh, e["ax"]:e["ax"] + ew] > 12  # ~0.05 brightness
-                patch = np.kron(patch, np.ones((sc, sc), bool))
-                ys, xs = np.nonzero(patch)
-                ys, xs = ys + y0, xs + x0
-                ok = (ys >= 0) & (ys < h) & (xs >= 0) & (xs < w)
-                new[ys[ok], xs[ok]] = True
-            else:
-                disc(new, cx, cy, e["r10"] / 10)
+            disc(new, e["cx4"] / 4, e["cy4"] / 4, e["r10"] / 10 * a.rscale)
         totals["new"].append(score(new, truth))
         if old is not None:
             o = np.zeros((h, w), bool)

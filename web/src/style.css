@@ -72,36 +72,56 @@ button, select, input { font: inherit; color: inherit; }
   backdrop-filter: blur(18px) saturate(150%);
 }
 
-/* ---------- Start screen ---------- */
-.start {
+/* ---------- Cover (start screen) ---------- */
+/* The planet behind is the WebGL globe; this layer only holds the words. */
+.cover {
   position: fixed; inset: 0; z-index: 20;
-  display: grid; place-items: center; padding: 24px;
-  background:
-    radial-gradient(ellipse 60% 50% at 50% 50%, rgba(30, 80, 140, 0.25), transparent 70%),
-    rgba(4, 6, 11, 0.92);
+  display: flex; align-items: center;
+  padding: 24px clamp(24px, 7vw, 136px);
+  background: linear-gradient(90deg, rgba(0, 0, 0, 0.6) 0%, rgba(0, 0, 0, 0.25) 40%, transparent 65%);
 }
-.start-card { max-width: 560px; text-align: center; }
+.cover-copy {
+  max-width: 780px;
+  opacity: 0; transform: translateY(12px);
+  transition: opacity 1.1s ease, transform 1.1s ease;
+}
+.cover.ready .cover-copy { opacity: 1; transform: none; }
+.cover.leaving { pointer-events: none; }
+.cover.leaving .cover-copy { opacity: 0; transform: translateX(-28px); transition-duration: 0.6s; }
+.cover.leaving { background: transparent; transition: background 1s ease; }
 .eyebrow {
-  margin: 0 0 14px; font-size: 12px; font-weight: 600; letter-spacing: 0.14em;
-  text-transform: uppercase; color: var(--accent);
+  margin: 0 0 22px; font-size: 12px; font-weight: 600; letter-spacing: 0.18em;
+  text-transform: uppercase; color: rgba(236, 241, 255, 0.62);
 }
-.start h1 {
-  margin: 0; font-size: clamp(32px, 6vw, 56px); line-height: 1.05; font-weight: 700; letter-spacing: -0.02em;
+.cover h1 {
+  margin: 0;
+  font-family: Barlow, Inter, sans-serif; font-weight: 600;
+  font-size: clamp(42px, 6.2vw, 100px); line-height: 0.95; letter-spacing: 0.01em;
+  text-transform: uppercase; color: #f1f3fb;
 }
-.lede { margin: 18px auto 32px; max-width: 440px; color: var(--muted); font-size: 17px; line-height: 1.55; }
-.btn-primary {
-  display: inline-flex; align-items: center; gap: 10px;
-  padding: 15px 28px; border: 0; border-radius: 999px; cursor: pointer;
-  background: var(--text); color: var(--accent-ink); font-size: 16px; font-weight: 600;
-  box-shadow: 0 8px 30px rgba(143, 211, 255, 0.25);
-  transition: transform 0.15s, box-shadow 0.15s;
+.lede { margin: 26px 0 34px; max-width: 500px; color: rgba(236, 241, 255, 0.82); font-size: 17px; line-height: 1.6; }
+.btn-outline {
+  display: inline-flex; align-items: center; gap: 14px;
+  padding: 15px 24px; border: 1px solid rgba(255, 255, 255, 0.75); border-radius: 4px;
+  background: transparent; color: #fff; cursor: pointer;
+  font-size: 14px; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase;
+  transition: background 0.2s, color 0.2s;
 }
-.btn-primary:hover { transform: translateY(-1px); box-shadow: 0 10px 36px rgba(143, 211, 255, 0.35); }
-.btn-primary svg { width: 18px; height: 18px; fill: currentColor; }
-.hint { margin: 22px 0 0; font-size: 13px; color: var(--faint); }
+.btn-outline svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.6; }
+.btn-outline:hover, .btn-outline:focus-visible { background: #fff; color: #05070c; }
+.btn-outline:disabled { cursor: default; }
+.hint { margin: 24px 0 0; font-size: 13px; color: rgba(236, 241, 255, 0.5); }
+@media (max-width: 760px) and (orientation: portrait) {
+  /* Planet sits low (globe.js); words at the top. */
+  .cover { align-items: flex-start; padding-top: 72px; background: linear-gradient(180deg, rgba(0,0,0,0.6), transparent 55%); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .cover-copy, .cover.leaving .cover-copy { transition-duration: 0.2s; transform: none; }
+}
 
 /* ---------- App overlay ---------- */
-.app { position: fixed; inset: 0; pointer-events: none; z-index: 10; }
+.app { position: fixed; inset: 0; pointer-events: none; z-index: 10; transition: opacity 0.9s ease; }
+.app.intro { opacity: 0; }
 .app > * { pointer-events: auto; }
 .app .meta, .app .bottom { pointer-events: none; }
 .app .bottom > *, .app .meta > * { pointer-events: auto; }

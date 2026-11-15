@@ -9,7 +9,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
       rel="stylesheet"
-      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Barlow:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap"
     />
     <link rel="stylesheet" href="/src/style.css" />
   </head>
@@ -25,18 +25,20 @@
     >
     </div>
 
-    <!-- Browsers block audio until a click, so everything starts here. -->
-    <div id="start" class="start">
-      <div class="start-card">
-        <p class="eyebrow">NASA Space Apps 2026</p>
-        <h1>Earth Information Jukebox</h1>
-        <p class="lede">Spin the planet and hear NASA Earth data. Ocean temperatures, storms and air, turned into music.</p>
-        <button id="start-btn" class="btn-primary" type="button">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l11-6.5z" /></svg>
+    <!-- Cover. Browsers block audio until a click, so everything starts here. The sunlit
+         Earth behind it is the globe itself (main.js, globe.setCover). -->
+    <div id="start" class="start cover">
+      <div class="cover-copy">
+        <p class="eyebrow">NASA Space Apps 2026 · Earth Information Jukebox</p>
+        <h1>A new way to<br />hear the world</h1>
+        <p class="lede">NASA's view of our planet, turned into sound. Spin the Earth and listen to oceans, storms and air, with or without sight.</p>
+        <button id="start-btn" class="btn-outline" type="button">
           Start listening
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12h15M13 6l6 6-6 6" /></svg>
         </button>
         <p class="hint">Headphones recommended · Arrow keys spin · Shift reads values aloud</p>
       </div>
+    </div>
     </div>
 
     <div id="app" class="app" hidden>

@@ -1,30 +1,25 @@
-"""Lightning as vector events with their real shapes (instead of a blurry video).
+"""Lightning as vector events: every flash dot NASA drew (instead of a blurry video).
 
     python pipeline/events.py lightning
 
-The lightning movie is a static grey map with yellow flash dots, which is the worst case
-for video compression. So each flash is stored ONCE, with NASA's own pixels:
-  events.bin    every flash: where, when, and how to draw it (16-byte records)
-  shapes.png    texture atlas (greyscale) of every flash a circle can't describe:
-                NASA's brightness for the flash's pixels. Large storm clusters are
-                stored at 1/2 or 1/4 resolution (NASA draws soft dots, so little is lost)
+The lightning movie is a static grey map with soft yellow flash dots, which is the worst
+case for video compression. So each dot is stored ONCE:
+  events.bin    every dot: where, how big, how bright, and when (10-byte records)
   events.json   layout + counts
   base.jpg      the empty map from frame 0 (fallback when there is no night map)
-The globe redraws each flash from the atlas (sharp at any zoom), with a glow and a short
-afterglow.
+The globe redraws each dot as a soft glow, sharp at any zoom, with a short afterglow.
 
 A flash is a connected patch of yellow pixels, tracked across frames by its centre (1 px
-tolerance). Its shape is the union of its pixels over its lifetime, at the brightest each
-pixel got. Flashes under 20 px, or close to round (overlap with an equal-area disc of 70%
-or more), are stored as round dots: centre, radius, peak brightness.
+tolerance); its footprint is the union of its pixels over its lifetime, at the brightest
+each pixel got. NASA draws every flash as a round dot, so busy storms are clusters of
+overlapping dots. A cluster is split back into its dots: each local brightness peak is a
+dot, owning the cluster pixels nearest to it, with the radius of a disc of that area.
 
-events.bin: little-endian records of 16 bytes, sorted by start frame:
-  uint16 cx4, cy4     centre in source pixels x 4 (4096x2048, row 0 = north)
-  uint16 start, end   summary-frame range [start, end) the flash is visible
-  uint8  w, h         shape size in atlas texels, padding included (0 = round dot)
-  uint8  r10          round dot: radius in source pixels x 10
-  uint8  peak         round dot: brightness 0-255; shape: source pixels per atlas texel
-  uint16 ax, ay       shape's top-left corner in the atlas
+events.bin: little-endian records of 10 bytes, sorted by start frame:
+  uint16 cx4, cy4     dot centre in source pixels x 4 (4096x2048, row 0 = north)
+  uint16 start, end   summary-frame range [start, end) the dot is visible
+  uint8  r10          radius in source pixels x 10
+  uint8  peak         NASA's brightness at the dot's centre, 0-255
 Frames are the same summary frames as summary.bin (every Nth movie frame).
 """
 
@@ -35,18 +30,17 @@ import sys
 
 import numpy as np
 from PIL import Image
+from scipy.spatial import cKDTree
+from skimage.feature import peak_local_max
 from skimage.measure import label, regionprops
 
 from manifest import DATASETS, OUT
 from media import movie_path, probe_movie
 from summarize import flash_mask
 
-MATCH_TOL = 1     # px: a flash within 1 px of an active flash's centre is the same flash
-PAD = 2           # atlas texels of padding around each shape, room for its halo
-DOT_MAX_AREA = 19  # flashes this small are stored as round dots
-ROUND_IOU = 0.7    # ... and so are bigger ones this close to a disc
-ATLAS_W = 8192
-LEVELS = 64        # brightness steps stored (compresses far better than 256)
+MATCH_TOL = 1      # px: a flash within 1 px of an active flash's centre is the same flash
+PEAK_SPACING = 2   # px: brightness peaks closer than this are one dot
+PEAK_MIN = 0.08    # peaks dimmer than this (0-1) are a dot's edge, not a dot
 
 
 def frames(path, every, w, h):
@@ -86,20 +80,31 @@ class Flash:
         self.y0, self.x0, self.patch = ny0, nx0, out
 
 
-def pack(shapes):
-    """Shelf-pack padded shapes into an ATLAS_W-wide atlas. Returns positions and height."""
-    order = sorted(range(len(shapes)), key=lambda k: -shapes[k].shape[0])
-    pos = [None] * len(shapes)
-    x = y = shelf_h = 0
-    for k in order:
-        h, w = shapes[k].shape
-        if x + w > ATLAS_W:
-            y += shelf_h
-            x = shelf_h = 0
-        pos[k] = (x, y)
-        x += w
-        shelf_h = max(shelf_h, h)
-    return pos, y + shelf_h
+def split_dots(f):
+    """Dots making up one flash footprint: [(cx, cy, r, peak)] in source pixels."""
+    pt = f.patch
+    ys, xs = np.nonzero(pt)
+    if len(ys) == 0:
+        return []
+    peaks = peak_local_max(pt, min_distance=PEAK_SPACING, threshold_abs=PEAK_MIN, exclude_border=False)
+    if len(peaks) <= 1:
+        wts = pt[ys, xs]
+        cy = f.y0 + (ys * wts).sum() / wts.sum() + 0.5
+        cx = f.x0 + (xs * wts).sum() / wts.sum() + 0.5
+        return [(cx, cy, (len(ys) / np.pi) ** 0.5, float(pt.max()))]
+    # Each lit pixel belongs to its nearest peak; that cell's area sets the dot's size.
+    owner = cKDTree(peaks).query(np.column_stack([ys, xs]))[1]
+    out = []
+    for k, (py, px) in enumerate(peaks):
+        cell = owner == k
+        n = int(cell.sum())
+        if n == 0:
+            continue
+        wts = pt[ys[cell], xs[cell]]
+        cy = f.y0 + (ys[cell] * wts).sum() / wts.sum() + 0.5
+        cx = f.x0 + (xs[cell] * wts).sum() / wts.sum() + 0.5
+        out.append((cx, cy, (n / np.pi) ** 0.5, float(pt[py, px])))
+    return out
 
 
 def main():
@@ -153,74 +158,30 @@ def main():
         done.append((f, i + 1))
     nframes = i + 1
 
-    done.sort(key=lambda e: e[0].start)
-    rec = np.zeros(len(done), dtype=[("cx4", "<u2"), ("cy4", "<u2"), ("start", "<u2"), ("end", "<u2"),
-                                     ("w", "u1"), ("h", "u1"), ("r10", "u1"), ("peak", "u1"),
-                                     ("ax", "<u2"), ("ay", "<u2")])
-    shapes, shape_rows = [], []
-    clipped = 0
-    for j, (f, end) in enumerate(done):
-        pt = f.patch
-        ys, xs = np.nonzero(pt)
-        wts = pt[ys, xs]
-        area = len(ys)
-        cy = f.y0 + (ys * wts).sum() / wts.sum() + 0.5
-        cx = f.x0 + (xs * wts).sum() / wts.sum() + 0.5
-        r = (area / np.pi) ** 0.5
-        rec["start"][j], rec["end"][j] = f.start, end
-        round_enough = area <= DOT_MAX_AREA
-        if not round_enough:
-            gy, gx = np.mgrid[:pt.shape[0], :pt.shape[1]]
-            disc = (gx + f.x0 + 0.5 - cx) ** 2 + (gy + f.y0 + 0.5 - cy) ** 2 <= r * r
-            lit = pt > 0
-            round_enough = (lit & disc).sum() / (lit | disc).sum() >= ROUND_IOU
-        if round_enough:
-            rec["cx4"][j], rec["cy4"][j] = round(cx * 4), round(cy * 4)
-            rec["r10"][j] = min(255, round(r * 10))
-            rec["peak"][j] = round(float(pt.max()) * 255)
-            continue
-        big = max(pt.shape)
-        scale = 1 if big <= 32 else 2 if big <= 96 else 4
-        # Round the patch up to whole texels, then average each scale x scale block.
-        ph, pw = -(-pt.shape[0] // scale) * scale, -(-pt.shape[1] // scale) * scale
-        pt = np.pad(pt, ((0, ph - pt.shape[0]), (0, pw - pt.shape[1])))
-        tex = pt.reshape(ph // scale, scale, pw // scale, scale).max(axis=(1, 3))
-        if max(tex.shape) + 2 * PAD > 255:  # keep the brightest core
-            ty, tx = np.unravel_index(tex.argmax(), tex.shape)
-            ty0, tx0 = max(0, ty - 125), max(0, tx - 125)
-            tex = tex[ty0:ty0 + 251, tx0:tx0 + 251]
-            f.y0 += ty0 * scale
-            f.x0 += tx0 * scale
-            clipped += 1
-        padded = np.pad(tex, PAD)
-        shapes.append(padded)
-        shape_rows.append(j)
-        th, tw = padded.shape
-        # Centre of the padded patch in source pixels (x4 stays exact).
-        rec["cx4"][j] = round((f.x0 - PAD * scale + tw * scale / 2) * 4)
-        rec["cy4"][j] = round((f.y0 - PAD * scale + th * scale / 2) * 4)
-        rec["w"][j], rec["h"][j], rec["peak"][j] = tw, th, scale
-
-    pos, atlas_h = pack(shapes)
-    atlas = np.zeros((atlas_h, ATLAS_W), np.uint8)
-    for (x, y), sh, j in zip(pos, shapes, shape_rows):
-        q = np.round(sh * (LEVELS - 1)) * (255 / (LEVELS - 1))
-        atlas[y:y + sh.shape[0], x:x + sh.shape[1]] = np.round(q)
-        rec["ax"][j], rec["ay"][j] = x, y
-    if atlas_h > 8192:
-        print(f"WARNING: atlas is {atlas_h} rows; some GPUs only allow 8192", flush=True)
-    Image.fromarray(atlas).save(out / "shapes.png", optimize=True)
+    dots = []
+    split = 0
+    for f, end in done:
+        parts = split_dots(f)
+        split += len(parts) > 1
+        dots.extend((cx, cy, r, pk, f.start, end) for cx, cy, r, pk in parts)
+    dots.sort(key=lambda d: d[4])
+    rec = np.zeros(len(dots), dtype=[("cx4", "<u2"), ("cy4", "<u2"), ("start", "<u2"), ("end", "<u2"),
+                                     ("r10", "u1"), ("peak", "u1")])
+    arr = np.array(dots, dtype=np.float64)
+    rec["cx4"] = np.round(arr[:, 0] * 4)
+    rec["cy4"] = np.round(arr[:, 1] * 4)
+    rec["r10"] = np.clip(np.round(arr[:, 2] * 10), 1, 255)
+    rec["peak"] = np.clip(np.round(arr[:, 3] * 255), 1, 255)
+    rec["start"], rec["end"] = arr[:, 4], arr[:, 5]
     rec.tofile(out / "events.bin")
-    (out / "events.bin.old").unlink(missing_ok=True)
-    meta = {"version": 2, "count": len(done), "shapes": len(shapes), "frames": nframes, "width": w, "height": h,
-            "recordBytes": 16, "atlas": [ATLAS_W, atlas_h], "pad": PAD, "dotMaxArea": DOT_MAX_AREA, "roundIou": ROUND_IOU,
-            "layout": "uint16 cx4, cy4, start, end; uint8 w, h, r10, peak; uint16 ax, ay (little-endian)"}
+    (out / "shapes.png").unlink(missing_ok=True)  # from the shape-atlas version
+    meta = {"version": 3, "count": len(rec), "flashes": len(done), "frames": nframes, "width": w, "height": h,
+            "recordBytes": 10, "peakSpacing": PEAK_SPACING, "peakMin": PEAK_MIN,
+            "layout": "uint16 cx4, cy4, start, end; uint8 r10, peak (little-endian)"}
     (out / "events.json").write_text(json.dumps(meta, indent=2))
     life = rec["end"].astype(int) - rec["start"]
-    print(f"wrote {len(done)} flashes ({len(shapes)} shapes, {clipped} clipped), "
-          f"events.bin {rec.nbytes / 1e6:.1f} MB, shapes.png {ATLAS_W}x{atlas_h} "
-          f"{(out / 'shapes.png').stat().st_size / 1e6:.1f} MB, max lifetime {life.max()} frames")
-
+    print(f"wrote {len(rec)} dots from {len(done)} flashes ({split} clusters split into dots), "
+          f"events.bin {rec.nbytes / 1e6:.1f} MB, max lifetime {life.max()} frames")
 
 if __name__ == "__main__":
     sys.exit(main())

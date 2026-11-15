@@ -239,6 +239,13 @@ export class Sky {
     this.setTime(Date.now());
   }
 
+  // Sun, Moon, planets and their names (hidden on the cover, whose sunlight is staged).
+  showBodies(on) {
+    this.sun.visible = on;
+    for (const b of Object.values(this.bodies)) b.mesh.visible = on;
+    this.labelLayer.hidden = !on;
+  }
+
   // ms: the moment being shown (UTC). Cheap; skipped unless the date moved.
   setTime(ms) {
     if (this.lastMs !== null && Math.abs(ms - this.lastMs) < 60000) return; // 1 min
@@ -260,11 +267,11 @@ export class Sky {
   update(width, height, pixelHeight) {
     const cam = this.camera;
     const main = this.mainCamera;
-    if (cam.fov !== main.fov || cam.aspect !== main.aspect) {
-      cam.fov = main.fov;
-      cam.aspect = main.aspect;
-      cam.updateProjectionMatrix();
-    }
+    // Same lens as the globe's camera, including any off-centre framing (the cover).
+    cam.fov = main.fov;
+    cam.aspect = main.aspect;
+    cam.projectionMatrix.copy(main.projectionMatrix);
+    cam.projectionMatrixInverse.copy(main.projectionMatrixInverse);
     cam.quaternion.copy(main.quaternion);
     this.root.quaternion.copy(this.follow.getWorldQuaternion(this._q));
     this.scene.updateMatrixWorld(true);

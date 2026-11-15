@@ -121,8 +121,8 @@ export class GridCache {
 
 // events.bin: 9-byte records (uint16 x, y, start, end; uint8 radius*10), little-endian.
 // Unpacked into typed arrays the globe hands straight to the GPU.
-// Lightning flashes from pipeline/events.py: 16-byte records + a shape atlas (NASA's own
-// pixels for every flash bigger than a tiny dot). Night base maps from pipeline/nightmap.py.
+// Lightning dots from pipeline/events.py (10-byte records) and the night base maps from
+// pipeline/nightmap.py.
 async function loadEvents(dir, optional, has) {
   const meta = await optional('events.json');
   if (!meta) return null;
@@ -137,27 +137,19 @@ async function loadEvents(dir, optional, has) {
     count: n, width: meta.width, height: meta.height, frames: meta.frames,
     base: `${dir}/base.jpg`,
     night: night8 || night4 ? { 8192: night8 ? `${dir}/night_8k.jpg` : null, 4096: night4 ? `${dir}/night_4k.jpg` : null } : null,
-    atlas: meta.shapes ? { url: `${dir}/shapes.png`, size: meta.atlas } : null,
     cx: new Float32Array(n), cy: new Float32Array(n),
     start: new Float32Array(n), end: new Float32Array(n),
-    // Shape in the atlas (w, h, ax, ay in texels; w = 0 for a round dot), and
-    // (radius, peak) for round dots or (0, scale) for shapes.
-    shape: new Float32Array(n * 4), dot: new Float32Array(n * 2),
+    dot: new Float32Array(n * 2), // radius (source px), peak brightness 0-1
   };
-  for (let i = 0, o = 0; i < n; i++, o += 16) {
+  for (let i = 0, o = 0; i < n; i++, o += 10) {
     ev.cx[i] = dv.getUint16(o, true) / 4;
     ev.cy[i] = dv.getUint16(o + 2, true) / 4;
     ev.start[i] = dv.getUint16(o + 4, true);
     ev.end[i] = dv.getUint16(o + 6, true);
-    ev.shape[i * 4] = dv.getUint8(o + 8);
-    ev.shape[i * 4 + 1] = dv.getUint8(o + 9);
-    ev.shape[i * 4 + 2] = dv.getUint16(o + 12, true);
-    ev.shape[i * 4 + 3] = dv.getUint16(o + 14, true);
-    ev.dot[i * 2] = dv.getUint8(o + 10) / 10;
-    // Round dot: peak brightness 0-1. Shape: source pixels per atlas texel (1, 2 or 4).
-    ev.dot[i * 2 + 1] = ev.shape[i * 4] > 0 ? dv.getUint8(o + 11) : dv.getUint8(o + 11) / 255;
+    ev.dot[i * 2] = dv.getUint8(o + 8) / 10;
+    ev.dot[i * 2 + 1] = dv.getUint8(o + 9) / 255;
   }
-  // Longest a flash stays on screen: the globe only draws flashes that started within it.
+  // Longest a dot stays on screen: the globe only draws dots that started within it.
   let maxLife = 0;
   for (let i = 0; i < n; i++) maxLife = Math.max(maxLife, ev.end[i] - ev.start[i]);
   ev.maxLife = maxLife;

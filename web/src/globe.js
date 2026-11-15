@@ -79,6 +79,9 @@ export class Globe {
     this.pivot = new THREE.Group(); // tilt (x) applied outside spin (y)
     this.pivot.add(this.sphere);
     this.scene.add(this.pivot);
+    this.cover = null;
+    this.atmosphere = this._makeAtmosphere();
+    this.scene.add(this.atmosphere); // doesn't turn: the glow follows the light, not the land
     // Stars, Sun, Moon and planets for the shown date; they turn with the Earth.
     // Drawn first in its own pass (see update), so it sits at infinity behind the Earth.
     this.sky = new Sky({ follow: this.sphere, mainCamera: this.camera, container });
@@ -159,15 +162,11 @@ export class Globe {
     }
   }
 
-  // Vector events (lightning): every flash once, drawn as a GPU point only while
-  // start <= frame < end. Sharp at any zoom, no video needed.
-  // events: { x, y, start, end, r (Float32Array/Uint16Array...), count, width, height }
-  // Lightning (pipeline/events.py): every flash redrawn from NASA's own pixels (a shape
-  // atlas) or as a round dot, sharp at any zoom, with a halo and a short afterglow.
-  // Each flash is one GPU point; the vertex shader works out how one source pixel lands on
-  // screen at that spot (east and south vectors), and the fragment shader maps the point's
-  // pixels back into the flash's shape, so shapes stay true to the globe's curvature.
-  setEvents(events, atlasTexture = null) {
+  // Lightning (pipeline/events.py): every dot NASA drew, redrawn as a soft glow that stays
+  // sharp at any zoom, with a short afterglow. Each dot is one GPU point; the vertex shader
+  // works out how one source pixel lands on screen there (east and south vectors), so dots
+  // flatten correctly toward the globe's edge.
+  setEvents(events) {
     this.clearEvents();
     if (!events) return;
     const { count, width, height } = events;
@@ -184,7 +183,6 @@ export class Globe {
     const geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
     geo.setAttribute('aTime', new THREE.BufferAttribute(time, 2));
-    geo.setAttribute('aShape', new THREE.BufferAttribute(events.shape, 4));
     geo.setAttribute('aDot', new THREE.BufferAttribute(events.dot, 2));
     geo.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 1.01);
     geo.setDrawRange(0, 0);
@@ -197,24 +195,21 @@ export class Globe {
       uViewport: { value: new THREE.Vector2(1, 1) },
       uSrc: { value: new THREE.Vector2(width, height) },
       uMaxPoint: { value: Math.min(512, gl.getParameter(gl.ALIASED_POINT_SIZE_RANGE)[1]) },
-      uAtlas: { value: atlasTexture },
-      uAtlasSize: { value: new THREE.Vector2(...(events.atlas?.size ?? [1, 1])) },
     };
     const mat = new THREE.ShaderMaterial({
       uniforms: this.eventUniforms,
       transparent: true,
       depthWrite: false,
       depthTest: false, // far-side culling happens in the vertex shader
-      // Light, kept at the brightest of overlapping flashes (adding them blew busy storms
-      // out to white; NASA's movie keeps them yellow). Alpha follows the light so the
+      // Light, kept at the brightest of overlapping dots (adding them blew busy storms out
+      // to white; NASA's movie keeps them yellow). Alpha follows the light so the
       // transparent canvas composites it correctly past the globe's edge.
       blending: THREE.CustomBlending,
       blendEquation: THREE.MaxEquation,
       blendEquationAlpha: THREE.MaxEquation,
       vertexShader: /* glsl */ `
         attribute vec2 aTime;   // start, end (summary frames)
-        attribute vec4 aShape;  // w, h, atlas x, atlas y (w = 0: round dot)
-        attribute vec2 aDot;    // round dot: radius (source px), peak; shape: (0, source px per texel)
+        attribute vec2 aDot;    // radius (source px), peak brightness 0-1
         uniform float uFrame;
         uniform float uAfter;
         uniform vec2 uViewport; // device px
@@ -223,7 +218,6 @@ export class Globe {
         varying vec2 vEast;     // screen px per source px east
         varying vec2 vSouth;    // screen px per source px south (+y in the map)
         varying float vSize;
-        varying vec4 vShape;
         varying vec2 vDot;
         varying float vAge;
         varying float vSince;
@@ -234,7 +228,7 @@ export class Globe {
           float since = uFrame - aTime.y; // >= 0: finished, fading out
           if (age < 0.0 || since >= uAfter) { hide(); return; }
           vec4 mv = modelViewMatrix * vec4(position, 1.0);
-          // Hide flashes on the far side ourselves (depth testing clipped them at the limb).
+          // Hide dots on the far side ourselves (depth testing clipped them at the limb).
           vec3 normalView = normalize(normalMatrix * position);
           if (dot(normalView, normalize(-mv.xyz)) < 0.02) { hide(); return; }
           vec4 clip = projectionMatrix * mv;
@@ -244,24 +238,20 @@ export class Globe {
           vec2 s0 = px(clip);
           vEast = px(projectionMatrix * modelViewMatrix * vec4(position + east, 1.0)) - s0;
           vSouth = px(projectionMatrix * modelViewMatrix * vec4(position - north, 1.0)) - s0;
-          vec2 halfSize = aShape.x > 0.0 ? aShape.xy * 0.5 * aDot.y : vec2(aDot.x + 3.0);
-          vec2 ext = abs(vEast) * halfSize.x + abs(vSouth) * halfSize.y;
+          float reach = aDot.x * 1.6 + 3.0; // dot + halo, source px
+          vec2 ext = (abs(vEast) + abs(vSouth)) * reach;
           vSize = clamp(2.0 * max(ext.x, ext.y) + 2.0, 2.0, uMaxPoint);
           gl_PointSize = vSize;
           gl_Position = clip;
-          vShape = aShape;
           vDot = aDot;
           vAge = age;
           vSince = since;
         }`,
       fragmentShader: /* glsl */ `
-        uniform sampler2D uAtlas;
-        uniform vec2 uAtlasSize;
         uniform float uAfter;
         varying vec2 vEast;
         varying vec2 vSouth;
         varying float vSize;
-        varying vec4 vShape;
         varying vec2 vDot;
         varying float vAge;
         varying float vSince;
@@ -270,40 +260,21 @@ export class Globe {
           sp.y = -sp.y; // gl_PointCoord runs down the screen
           mat2 J = mat2(vEast, vSouth);
           if (abs(determinant(J)) < 1e-8) discard;
-          vec2 m = inverse(J) * sp; // offset in source pixels (x east, y south)
-          float core, glow;
-          if (vShape.x > 0.0) {
-            vec2 local = m / vDot.y + vShape.xy * 0.5; // atlas texels
-            if (any(lessThan(local, vec2(0.0))) || any(greaterThan(local, vShape.xy))) discard;
-            vec2 uv = (vShape.zw + local) / uAtlasSize;
-            float t = texture2D(uAtlas, uv).r;
-            core = t * smoothstep(0.02, 0.2, t); // clean edge where NASA's brightness ends
-            // Halo: NASA's brightness spread ~2 source px (8 taps around this point).
-            vec2 r = vec2(max(1.8 / vDot.y, 0.6)) / uAtlasSize;
-            float g = 0.0;
-            for (int k = 0; k < 8; k++) {
-              float ang = float(k) * 0.7853982;
-              g += texture2D(uAtlas, uv + r * vec2(cos(ang), sin(ang))).r;
-            }
-            glow = max(t, g * 0.2);
-          } else {
-            // Tiny flash: keep it at least ~1 screen pixel wide so it never vanishes.
-            float r = max(vDot.x, 0.6 / max(length(vEast), 1e-3));
-            float aa = 0.5 / max(length(vEast), 1e-3);
-            float d = length(m);
-            // Soft dot, brightest in the middle, like NASA's (not a flat disc).
-            float edge = 1.0 - smoothstep(r - aa, r + aa * 2.0, d);
-            core = vDot.y * edge * mix(0.55, 1.0, sqrt(max(0.0, 1.0 - d * d / (r * r + 1e-3))));
-            glow = vDot.y * exp(-pow(max(d - r * 0.5, 0.0) / 1.6, 2.0));
-          }
-          // New flashes pop white-hot, burn NASA's yellow, then cool to orange as they fade.
+          float d = length(inverse(J) * sp); // distance from the centre, source px
+          // Keep tiny dots at least ~1 screen pixel wide so they never vanish.
+          float r = max(vDot.x, 0.7 / max(length(vEast), 1e-3));
+          // A soft glow like NASA's dots: bright centre fading over the outer half, then a
+          // faint halo beyond.
+          float core = vDot.y * (1.0 - smoothstep(0.35, 1.05, d / r));
+          float glow = vDot.y * exp(-pow(max(d - r, 0.0) / 1.8, 2.0)) * 0.45;
+          // New dots pop white-hot, burn NASA's yellow, then cool to orange as they fade.
           float hot = 1.0 - smoothstep(0.0, 3.0, vAge);
           float after = clamp(vSince / uAfter, 0.0, 1.0);
           float fade = vSince < 0.0 ? 1.0 : exp(-vSince / (uAfter * 0.3)) * (1.0 - after);
-          vec3 coreColor = mix(vec3(1.0, 0.86, 0.12), vec3(1.0), hot * 0.85);
+          vec3 coreColor = mix(vec3(1.0, 0.86, 0.12), vec3(1.0, 0.97, 0.82), hot * 0.85);
           coreColor = mix(coreColor, vec3(1.0, 0.45, 0.1), smoothstep(0.0, 0.5, after) * step(0.0, vSince));
-          // Max-blended, so take the brighter of the flash and its halo rather than adding.
-          vec3 c = max(coreColor * min(core * 1.15, 1.0), vec3(1.0, 0.58, 0.14) * glow * 0.45) * fade;
+          // Max-blended, so take the brighter of the dot and its halo rather than adding.
+          vec3 c = max(coreColor * min(core * 1.15, 1.0), vec3(1.0, 0.58, 0.14) * glow) * fade;
           float a = max(c.r, max(c.g, c.b));
           if (a < 0.003) discard;
           gl_FragColor = vec4(c, a);
@@ -313,10 +284,6 @@ export class Globe {
     this.eventPoints.frustumCulled = false;
     this.sphere.add(this.eventPoints); // rotates with the globe
     this._updateEventScale();
-  }
-
-  setEventAtlas(tex) {
-    if (this.eventUniforms) this.eventUniforms.uAtlas.value = tex;
   }
 
   // Only flashes that started within the longest lifetime (+ afterglow) can be showing, and
@@ -358,9 +325,18 @@ export class Globe {
       cf1: { value: new THREE.Vector4(0, 1, 0, 0) },
       cf2: { value: new THREE.Vector4(0, 0, 1, 0) },
       smoothOn: { value: 1 }, // bicubic sampling where texels are magnified (zoomed in)
+      // Cover (start screen): a realistic sunlit Earth, then the data revealed across it.
+      coverOn: { value: 0 },
+      coverDay: { value: blank },
+      coverNight: { value: blank },
+      coverSun: { value: new THREE.Vector3(-0.95, 0.26, 0.16).normalize() }, // view space: from the left
+      coverReveal: { value: 0 }, // 0 = all realistic Earth, 1 = all data
     };
     this.material.onBeforeCompile = (shader) => {
       Object.assign(shader.uniforms, this.uniforms);
+      shader.vertexShader = shader.vertexShader
+        .replace('#include <common>', '#include <common>\nvarying vec3 vViewN;')
+        .replace('#include <fog_vertex>', 'vViewN = normalize(normalMatrix * normal);\n#include <fog_vertex>');
       shader.fragmentShader = shader.fragmentShader
         .replace(
           '#include <common>',
@@ -373,6 +349,12 @@ uniform vec4 cf0;
 uniform vec4 cf1;
 uniform vec4 cf2;
 uniform float smoothOn;
+uniform float coverOn;
+uniform sampler2D coverDay;
+uniform sampler2D coverNight;
+uniform vec3 coverSun;
+uniform float coverReveal;
+varying vec3 vViewN;
 
 // Catmull-Rom bicubic in 9 bilinear taps. Only used where one texel covers more than a
 // screen pixel: there, plain bilinear shows soft blocks; zoomed out it would just cost time
@@ -442,10 +424,24 @@ vec4 sampleSmooth(sampler2D tex, vec2 uv) {
     float m = texture2D(landMask, vMapUv).r;
     if (m > 0.0) diffuseColor.rgb = mix(diffuseColor.rgb, sampleSmooth(landMap, vMapUv).rgb, m);
   }
+  if (coverOn > 0.5) {
+    // Sunlit Blue Marble by day, Black Marble city lights by night.
+    float ndl = dot(normalize(vViewN), coverSun);
+    float day = smoothstep(-0.1, 0.3, ndl);
+    vec3 dayC = texture2D(coverDay, vMapUv).rgb * clamp(ndl * 1.1 + 0.08, 0.0, 1.0);
+    vec3 nightC = pow(texture2D(coverNight, vMapUv).rgb, vec3(1.7)) * 2.4; // lights bright, land dark
+    vec3 real = mix(nightC, dayC, day);
+    // "Data dawn": the data sweeps in from the sunlit side to the night side, with a faint
+    // bright line at the edge.
+    float edge = mix(1.25, -1.6, coverReveal);
+    float show = smoothstep(edge, edge + 0.35, ndl);
+    float line = exp(-pow((ndl - edge - 0.12) / 0.05, 2.0)) * (1.0 - smoothstep(0.85, 1.0, coverReveal));
+    diffuseColor.rgb = mix(real, diffuseColor.rgb, show) + vec3(0.35, 0.65, 1.0) * line * 0.5 * step(0.001, coverReveal);
+  }
 #endif`,
         );
     };
-    this.material.customProgramCacheKey = () => 'globe-land-colorfix-bicubic-v4';
+    this.material.customProgramCacheKey = () => 'globe-land-colorfix-bicubic-cover-v5';
   }
 
   spinBy(rad) {
@@ -470,6 +466,7 @@ vec4 sampleSmooth(sampler2D tex, vec2 uv) {
   update(dt) {
     this.idleFor += dt;
     this._stepKeys(dt);
+    this._stepCover(dt);
     if (!this.dragging) {
       this.spin += this.spinVel * dt;
       this.spinVel *= Math.pow(0.08, dt); // momentum decays smoothly
@@ -480,9 +477,10 @@ vec4 sampleSmooth(sampler2D tex, vec2 uv) {
         this.spin += this.autoSpin * ease * dt;
       }
     }
-    // Smooth zoom toward the target
+    // Smooth zoom toward the target (the cover animation drives the distance itself)
     const prev = this.distance;
-    this.distance += (this.targetDistance - this.distance) * (1 - Math.exp(-dt * 10));
+    if (this.cover) this.distance = this.targetDistance;
+    else this.distance += (this.targetDistance - this.distance) * (1 - Math.exp(-dt * 10));
     if (Math.abs(this.distance - prev) > 1e-4) {
       this.camera.position.z = this.distance;
       this.onZoom?.(this.zoomFactor);
@@ -493,6 +491,132 @@ vec4 sampleSmooth(sampler2D tex, vec2 uv) {
     this.renderer.render(this.sky.scene, this.sky.camera);
     this.renderer.clearDepth();
     this.renderer.render(this.scene, this.camera);
+  }
+
+  // ---------- Cover (start screen) ----------
+  // A big, sunlit, slowly turning Earth off to one side, with the real sky behind it. Same
+  // globe and camera as the app, so the hand-off to the data is one continuous move.
+  setCover(day, night) {
+    const u = this.uniforms;
+    for (const t of [day, night]) {
+      t.colorSpace = THREE.SRGBColorSpace;
+      t.anisotropy = this.renderer.capabilities.getMaxAnisotropy();
+    }
+    u.coverDay.value = day;
+    u.coverNight.value = night;
+    u.coverOn.value = 1;
+    u.coverReveal.value = 0;
+    this.atmoUniforms.uAmount.value = 1;
+    this.cover = { t: 0, leaving: false, dataReady: false, revealT: null, startSpin: 0, startTilt: 0, resolve: null };
+    this.sky.showBodies(false);
+    this.tilt = 12 * DEG;
+    this._coverFrame(1);
+  }
+
+  // Data is on the globe: the reveal may begin.
+  coverDataReady() {
+    if (this.cover) this.cover.dataReady = true;
+  }
+
+  // Glide to the app's view while turning half a world (the stars sweep past), then sweep
+  // the data across the planet. Resolves when the app view is fully in place.
+  leaveCover() {
+    const c = this.cover;
+    if (!c || c.leaving) return Promise.resolve();
+    c.leaving = true;
+    c.t = 0;
+    c.startSpin = this.spin;
+    c.startTilt = this.tilt;
+    return new Promise((resolve) => { c.resolve = resolve; });
+  }
+
+  // Thin blue glow around the cover Earth, brightest on its sunlit edge. Only drawn outside
+  // the planet's outline (back faces of a slightly larger sphere), so it never tints the data.
+  _makeAtmosphere() {
+    this.atmoUniforms = { uAmount: { value: 0 }, uSun: { value: this.uniforms.coverSun.value } };
+    const mat = new THREE.ShaderMaterial({
+      uniforms: this.atmoUniforms,
+      side: THREE.BackSide,
+      transparent: true,
+      depthWrite: false,
+      blending: THREE.CustomBlending,
+      blendSrc: THREE.OneFactor,
+      blendDst: THREE.OneFactor,
+      blendSrcAlpha: THREE.OneFactor,
+      blendDstAlpha: THREE.OneFactor,
+      vertexShader: /* glsl */ `
+        varying vec3 vN; varying vec3 vPos;
+        void main() {
+          vN = normalize(normalMatrix * normal);
+          vec4 mv = modelViewMatrix * vec4(position, 1.0);
+          vPos = mv.xyz;
+          gl_Position = projectionMatrix * mv;
+        }`,
+      fragmentShader: /* glsl */ `
+        uniform float uAmount; uniform vec3 uSun; varying vec3 vN; varying vec3 vPos;
+        void main() {
+          vec3 v = normalize(-vPos);
+          // Back faces seen just past the planet's edge face away at ~-0.29; the shell's own
+          // outline is 0. Brightest against the planet, fading out into space.
+          float rim = pow(clamp(-dot(vN, v) / 0.29, 0.0, 1.0), 2.2);
+          float lit = smoothstep(-0.35, 0.6, dot(vN, uSun)); // sunlit side of the rim
+          vec3 c = vec3(0.32, 0.6, 1.0) * rim * (0.08 + 0.92 * lit) * uAmount * 0.9;
+          gl_FragColor = vec4(c, max(c.r, max(c.g, c.b)));
+        }`,
+    });
+    const m = new THREE.Mesh(new THREE.SphereGeometry(1.045, 96, 48), mat);
+    m.renderOrder = 2;
+    return m;
+  }
+
+  // How far the view is from the app's framing: 1 = cover (bigger, off to one side).
+  _coverFrame(k) {
+    const w = this.container.clientWidth, h = this.container.clientHeight;
+    const portrait = w < h;
+    const coverDistance = this.far * (portrait ? 0.82 : 0.78); // a bit closer than the app view
+    this.targetDistance = this.far + (coverDistance - this.far) * k;
+    // Shift the picture: right of centre on wide screens, lower on tall ones.
+    const ox = portrait ? 0 : -0.17 * w * k;
+    const oy = portrait ? -0.24 * h * k : 0;
+    if (k > 0) this.camera.setViewOffset(w, h, ox, oy, w, h);
+    else this.camera.clearViewOffset();
+  }
+
+  _stepCover(dt) {
+    const c = this.cover;
+    if (!c) return;
+    const u = this.uniforms;
+    if (!c.leaving) {
+      this.spin += (this.reducedMotion ? 0 : 4 * DEG) * dt; // the planet turns on its own
+      this._coverFrame(1);
+      return;
+    }
+    c.t += dt;
+    const ease = (x) => (x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2);
+    const glideTime = this.reducedMotion ? 0 : 2.2;
+    const g = glideTime ? Math.min(1, c.t / glideTime) : 1;
+    const e = ease(g);
+    this._coverFrame(1 - e);
+    if (!this.reducedMotion) {
+      this.spin = c.startSpin + Math.PI * e;
+      this.tilt = c.startTilt + (15 * DEG - c.startTilt) * e;
+    }
+    // The data dawn starts partway through the glide, once the data has arrived.
+    if (c.revealT === null && c.dataReady && c.t >= glideTime * 0.35) c.revealT = 0;
+    if (c.revealT !== null) {
+      c.revealT += dt;
+      const r = Math.min(1, c.revealT / (this.reducedMotion ? 0.4 : 1.5));
+      u.coverReveal.value = this.reducedMotion ? r : ease(r);
+      this.atmoUniforms.uAmount.value = 1 - u.coverReveal.value;
+      if (r >= 1 && g >= 1) {
+        u.coverOn.value = 0;
+        this.cover = null;
+        this.camera.clearViewOffset();
+        this.idleFor = 0;
+        this.sky.showBodies(true);
+        c.resolve?.();
+      }
+    }
   }
 
   // The moment shown (UTC ms): places the Sun, Moon and planets.

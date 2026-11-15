@@ -141,9 +141,9 @@ python pipeline/nightmap.py
 python pipeline/check_events.py --old data/work/lightning_events_v1.bin
 ```
 
-**Vector lightning:** video is the worst case for a static map with tiny one-color dots; it blurred them. `events.py` (about 6 minutes) stores every flash once, with its real shape: 824,854 flashes in `events.bin` (13 MB). Flashes under 20 px or close to round become soft dots (centre, radius, NASA's peak brightness); the other 181,840, mostly merged storm clusters, keep NASA's own pixels in `shapes.png`, an 8192×6700 greyscale atlas (16 MB; big clusters at 1/2 or 1/4 resolution, since NASA draws soft dots). The globe redraws each flash as one GPU point that maps its screen pixels back into the shape, so shapes follow the globe's curvature and stay sharp at any zoom. Each flash pops white-hot, burns yellow, then cools to orange in a half-second afterglow, with a soft halo. Overlapping flashes take the brightest value (adding them blew busy storms out to white).
+**Vector lightning:** video is the worst case for a static map with tiny one-color dots; it blurred them. `events.py` (about 6 minutes) stores every dot NASA drew, once: 1,861,901 dots from 824,854 flashes in `events.bin` (18.6 MB, 10 bytes each: centre, lifetime, radius, NASA's peak brightness). NASA draws every flash as a soft round dot, so a busy storm is a cluster of overlapping dots; each cluster (184,900 of them) is split back into its dots at its brightness peaks, each dot owning the cluster pixels nearest to it. The globe redraws each dot as one GPU point with a soft glow (bright centre, faint halo) that stays sharp at any zoom and flattens correctly toward the globe's edge. Dots pop white-hot, burn yellow, then cool to orange in a half-second afterglow; overlapping dots take the brightest value (adding them blew busy storms out to white). Only dots that can be on screen are drawn.
 
-- **Checked against NASA's frames** (`check_events.py`, 8 frames across the movie): we light 96.5% of NASA's lit pixels, and 76% of what we light is lit in NASA's frame. The previous round-dot version (capped at 3 px so merged blobs didn't balloon) lit only 44%, at 77%. The overdraw comes from drawing each flash's shape at its largest for its whole lifetime.
+- **Checked against NASA's frames** (`check_events.py`, 8 frames across the movie): we light 87% of NASA's lit pixels, and 74% of what we light is lit in NASA's frame. The previous version (one dot per flash, capped at 3 px so merged blobs didn't balloon) lit only 44%, at 77%. Drawing dots 10% or 20% larger lights 93% / 96% but drops precision to 67% / 60%, so dots stay at true size. An intermediate version kept exact cluster outlines as an image atlas (96.5% / 76%), but zoomed in, those looked pixelated next to the smooth dots.
 - **Night map:** NASA Black Marble 2016 (`nightmap.py`, from Earth Observatory's Earth at Night maps), recoloured from yellow-orange to cool blue-white so city lights can't be mistaken for lightning. 8192 and 4096 wide; the site picks by GPU and screen.
 - **Fallback:** `?events=0` switches back to the video version.
 
@@ -198,6 +198,10 @@ On frame 700, the redrawn types match NASA's frame: the Saharan dust plume, the 
 - **Sulfates** are pentatonic bell tones.
 
 Hovering a plume plays that type alone for 1.5 seconds, with the others ducked to about 12%.
+
+### Cover (start screen)
+
+`python pipeline/covermaps.py` -> `web/public/cover/` (1.6 MB): NASA Blue Marble Next Generation (August 2004, topography and bathymetry, 5400×2700) by day and Black Marble 2016 city lights by night, both 4096×2048. The cover is the app's own globe, lit by a staged sun with a thin atmosphere glow, turning slowly beside the headline. "Start listening" starts audio, then the same globe glides into the app view while turning 180° (the real star map sweeps past), and the ocean data sweeps across it from the sunlit side ("data dawn") before the controls fade in, about 3.5 seconds in all. With reduced motion, it's a short fade. The Sun, Moon and planets are hidden on the cover, since its sunlight is staged.
 
 ### Sky (Sun, Moon, planets, stars)
 

@@ -70,20 +70,47 @@ function writeDebug(f) {
   });
 }
 
-// ---------- Start screen: audio needs a user gesture ----------
+// ---------- Cover: the start screen (audio needs a user gesture) ----------
+// The globe exists from the first frame: a sunlit Earth turning beside the headline. The
+// button starts audio, then the same globe glides into the app view while the data sweeps
+// across it (globe.leaveCover).
+globe = new Globe($('globe'), { reducedMotion });
+if (import.meta.env.DEV) window.__globe = globe; // for side-by-side checks in the browser
+{
+  const blank = new THREE.DataTexture(new Uint8Array([4, 6, 12, 255]), 1, 1);
+  blank.needsUpdate = true;
+  globe.setTexture(blank); // until the first dataset arrives
+  const loader = new THREE.TextureLoader();
+  Promise.all(['cover/day.jpg', 'cover/night.jpg'].map((u) => loader.loadAsync(u)))
+    .then(([day, night]) => {
+      // Too late if the button was already pressed: then the app simply starts.
+      if (!$('start').classList.contains('leaving')) globe.setCover(day, night);
+      $('start').classList.add('ready');
+    })
+    .catch((err) => {
+      console.warn('[cover] textures failed', err);
+      $('start').classList.add('ready');
+    });
+}
+requestAnimationFrame(tick);
+
 $('start-btn').addEventListener('click', async () => {
+  $('start-btn').disabled = true;
+  // Move first, so the click answers instantly; audio and data catch up during the glide.
+  $('start').classList.add('leaving');
+  const leaving = globe.leaveCover();
   sound = new SoundEngine();
   await sound.start();
-  $('start').hidden = true;
+  $('app').classList.add('intro');
   $('app').hidden = false;
-  globe = new Globe($('globe'), { reducedMotion });
-  if (import.meta.env.DEV) window.__globe = globe; // for side-by-side checks in the browser
   globe.onZoom = onZoom;
   bindExplore();
   buildShelf();
-  $('globe').focus(); // before loading, so early arrow presses aren't lost
-  await selectDataset(DATASETS[0]);
-  requestAnimationFrame(tick);
+  const loaded = selectDataset(DATASETS[0]).then(() => globe.coverDataReady());
+  await Promise.all([leaving, loaded]);
+  $('start').hidden = true;
+  $('app').classList.remove('intro');
+  $('globe').focus(); // keyboard users land on the globe, ready to spin
 });
 $('start-btn').focus();
 
@@ -117,7 +144,6 @@ const quality = { res: null, probeMbps: null, note: '', locked: false, token: 0 
 
 let landTextures = [];
 let baseTexture = null; // static base map for vector-event datasets (lightning)
-let eventAtlas = null; // lightning flash shapes
 
 // NASA Black Marble under the lightning: 8192 wide where the GPU and screen can use it.
 function nightMapUrl(ev) {
@@ -280,8 +306,6 @@ async function selectDataset(ds) {
   videoTexture = null;
   quality.token++; // cancel any upgrade still in flight for the previous dataset
   globe.clearEvents();
-  eventAtlas?.dispose();
-  eventAtlas = null;
   baseTexture?.dispose();
   baseTexture = null;
   if (loaded.events && params.get('events') !== '0') {
@@ -291,21 +315,6 @@ async function selectDataset(ds) {
     quality.note = `vector events (${loaded.events.count.toLocaleString()} flashes)`;
     const ev = loaded.events;
     globe.setEvents(ev);
-    if (ev.atlas) {
-      // NASA's pixels for every flash shape. Exact texels, no mipmaps (they'd bleed between
-      // neighbouring shapes) and top row first, matching the atlas coordinates.
-      new THREE.TextureLoader().load(ev.atlas.url, (tex) => {
-        if (current !== loaded) { tex.dispose(); return; }
-        tex.colorSpace = THREE.NoColorSpace;
-        tex.flipY = false;
-        tex.generateMipmaps = false;
-        tex.minFilter = THREE.LinearFilter;
-        tex.needsUpdate = true;
-        eventAtlas?.dispose();
-        eventAtlas = tex;
-        globe.setEventAtlas(tex);
-      });
-    }
     // Placeholder until the base map arrives (the previous dataset's video is gone, and
     // drawing it logged "texImage2D: no video").
     const placeholder = new THREE.DataTexture(new Uint8Array([6, 8, 14, 255]), 1, 1);
@@ -589,7 +598,9 @@ function tick(now) {
   if (now > last) renderFps = renderFps * 0.95 + (1000 / (now - last)) * 0.05;
   last = now;
 
-  if (current) {
+  if (!current) {
+    globe.update(dt); // the cover
+  } else {
     const { summary, frames: meta } = current;
     if (!video) {
       if (playing) frame = (frame + dt * speed * ((meta?.fps ?? 30) / (meta?.movieStride ?? 4))) % summary.frames;
