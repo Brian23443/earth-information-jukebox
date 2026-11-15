@@ -340,6 +340,7 @@ export class Globe {
       landMap: { value: blank },
       landMask: { value: blank },
       landOn: { value: 0 },
+      landPrevOn: { value: 0 }, // the outgoing dataset had the land layer (during a swap)
       colorFixOn: { value: 0 },
       cf0: { value: new THREE.Vector4(1, 0, 0, 0) },
       cf1: { value: new THREE.Vector4(0, 1, 0, 0) },
@@ -369,6 +370,7 @@ export class Globe {
 uniform sampler2D landMap;
 uniform sampler2D landMask;
 uniform float landOn;
+uniform float landPrevOn;
 uniform float colorFixOn;
 uniform vec4 cf0;
 uniform vec4 cf1;
@@ -449,18 +451,22 @@ vec4 sampleSmooth(sampler2D tex, vec2 uv) {
     c = clamp(vec3(dot(cf0.xyz, c) + cf0.w, dot(cf1.xyz, c) + cf1.w, dot(cf2.xyz, c) + cf2.w), 0.0, 1.0);
     diffuseColor.rgb = sRGBTransferEOTF(vec4(c, 1.0)).rgb;
   }
+  float showNew = 1.0; // share of the new dataset here (below 1 only during a swap)
   if (swapOn > 0.5) {
     // The new dataset sweeps across the globe from left to right, with a faint edge line.
     vec4 prev = sampleSmooth(swapPrev, vMapUv);
     if (swapPrevVideo > 0.5) prev = sRGBTransferEOTF(prev);
     float xs = normalize(vViewN).x;
     float edge = mix(-1.45, 1.45, swapT);
-    float showNew = 1.0 - smoothstep(edge - 0.3, edge + 0.3, xs);
+    showNew = 1.0 - smoothstep(edge - 0.3, edge + 0.3, xs);
     float line = exp(-pow((xs - edge) / 0.06, 2.0)) * (1.0 - swapT);
     diffuseColor.rgb = mix(prev.rgb, diffuseColor.rgb, showNew) + vec3(0.35, 0.65, 1.0) * line * 0.25;
   }
-  if (landOn > 0.5) {
-    float m = texture2D(landMask, vMapUv).r;
+  // Land layer: on the parts of the globe showing a dataset that uses it, so it sweeps in
+  // (or out) with that dataset instead of jumping.
+  float landShare = landOn * showNew + landPrevOn * (1.0 - showNew);
+  if (landShare > 0.0) {
+    float m = texture2D(landMask, vMapUv).r * landShare;
     if (m > 0.0) diffuseColor.rgb = mix(diffuseColor.rgb, sampleSmooth(landMap, vMapUv).rgb, m);
   }
   if (coverOn > 0.5) {
@@ -480,7 +486,7 @@ vec4 sampleSmooth(sampler2D tex, vec2 uv) {
 #endif`,
         );
     };
-    this.material.customProgramCacheKey = () => 'globe-land-colorfix-bicubic-cover-swap-v6';
+    this.material.customProgramCacheKey = () => 'globe-land-colorfix-bicubic-cover-swap-v7';
   }
 
   spinBy(rad) {
@@ -540,9 +546,10 @@ vec4 sampleSmooth(sampler2D tex, vec2 uv) {
   swapFrom(prevTex, done) {
     const u = this.uniforms;
     this._swapDone?.(); // a swap still running: its old texture can go now
-    if (!prevTex || this.reducedMotion) { u.swapOn.value = 0; this._swapDone = null; done?.(); return; }
+    if (!prevTex || this.reducedMotion) { u.swapOn.value = 0; u.landPrevOn.value = 0; this._swapDone = null; done?.(); return; }
     u.swapPrev.value = prevTex;
     u.swapPrevVideo.value = prevTex.isVideoTexture ? 1 : 0;
+    u.landPrevOn.value = u.landOn.value; // still the outgoing dataset's: callers set the new land after
     u.swapOn.value = 1;
     u.swapT.value = 0;
     this._swapDone = done ?? (() => {});
@@ -554,6 +561,7 @@ vec4 sampleSmooth(sampler2D tex, vec2 uv) {
     u.swapT.value = Math.min(1, u.swapT.value + dt / 0.8);
     if (u.swapT.value >= 1) {
       u.swapOn.value = 0;
+      u.landPrevOn.value = 0;
       const done = this._swapDone;
       this._swapDone = null;
       done?.();
