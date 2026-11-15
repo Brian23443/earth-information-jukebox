@@ -23,7 +23,7 @@ const VOICE_DIR = 'show/voice';
 
 export class Show {
   constructor(ctx) {
-    this.ctx = ctx; // { globe, sound, selectDataset(id), seek(f), setPlaying(b), setSpeed(x), position(), rate(), probe(b), caption(text|null), onEnd() }
+    this.ctx = ctx; // { globe, sound, selectDataset(id, startAt, force), currentId(), seek(f), setPlaying(b), setSpeed(x), position(), rate(), probe(b), caption(text|null), onEnd() }
     this.running = false;
     this.cancels = new Set();
     this.recordings = null;
@@ -72,7 +72,13 @@ export class Show {
     // A new dataset opens already at its moment (seek), so nothing jumps. If the dataset
     // was already showing, the timeline glides there instead (see reach, below).
     let switched = false;
-    if (s.dataset) switched = await this._cancellable(ctx.selectDataset(s.dataset, s.seek ?? 0)); // (chimes, in main.js)
+    if (s.dataset) {
+      // Already showing but past the moment (e.g. the show started late in the timeline):
+      // gliding there would run through the end and loop, a visible jump. Reopen it with
+      // the transition instead.
+      const behind = ctx.currentId() === s.dataset && s.seek != null && ctx.position() > s.seek + 0.01;
+      switched = await this._cancellable(ctx.selectDataset(s.dataset, s.seek ?? 0, behind)); // (chimes, in main.js)
+    }
     let reach = s.reach, then = s.then;
     if (s.seek != null && !switched) {
       if (s.dataset) { reach = s.seek; then = s.speed; } else ctx.seek(s.seek);

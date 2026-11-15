@@ -3,6 +3,7 @@ export const DATASETS = [
   {
     id: 'sst',
     title: 'Ocean temperature',
+    short: 'Ocean', // on phones, so every dataset fits in one row
     description:
       'Sea surface currents, colored by temperature, March 2007 to March 2008. Warmer water opens the chord and raises the melody.',
     units: '°C',
@@ -59,16 +60,5 @@ export const DATASETS = [
     },
     svs: 'https://svs.gsfc.nasa.gov/5552/',
     credit: "Visualization: NASA's Scientific Visualization Studio. Data: GEOS-FP (NASA GMAO).",
-  },
-  {
-    id: 'forest',
-    title: 'Forest height',
-    description: 'Canopy height measured by the GEDI lidar on the Space Station, between 52° south and 52° north.',
-    units: 'm',
-    format: (v) => `${Math.round(v)} m`,
-    sound: 'forest', // TODO: explore-mode cursor layer
-    svs: 'https://svs.gsfc.nasa.gov/4950/',
-    credit:
-      "Visualization: NASA's Scientific Visualization Studio. Data: GEDI L3 V2 (NASA ORNL DAAC, via OpenTopography).",
   },
 ];

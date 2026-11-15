@@ -133,8 +133,9 @@ const show = new Show({
   get globe() { return globe; },
   get sound() { return sound; },
   // Resolves true if it switched (false: that dataset was already on screen).
-  async selectDataset(id, startAt = 0) {
-    if (current?.ds.id === id) return false;
+  // force: reopen the dataset that's already showing (with the transition) at startAt.
+  async selectDataset(id, startAt = 0, force = false) {
+    if (current?.ds.id === id && !force) return false;
     await selectDataset(DATASETS.find((d) => d.id === id), { startAt });
     return true;
   },
@@ -153,6 +154,9 @@ const show = new Show({
     speed = x;
     if (video) video.playbackRate = x;
     if ([...$('speed').options].some((o) => Number(o.value) === x)) $('speed').value = String(x);
+  },
+  currentId() {
+    return current?.ds.id ?? null;
   },
   // Where the timeline is (0-1), and how far it moves per second at 1x.
   position() {
@@ -246,7 +250,10 @@ function buildShelf() {
   for (const ds of DATASETS) {
     const b = document.createElement('button');
     b.type = 'button';
-    b.textContent = ds.title;
+    // Full name for everyone; narrow screens show the short one (style.css).
+    b.innerHTML = ds.short
+      ? `<span class="full">${ds.title}</span><span class="short" aria-hidden="true">${ds.short}</span>`
+      : ds.title;
     b.dataset.id = ds.id;
     b.setAttribute('aria-pressed', 'false');
     b.addEventListener('click', () => selectDataset(ds));

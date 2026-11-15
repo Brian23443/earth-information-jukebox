@@ -58,22 +58,22 @@
           </div>
         </div>
         <div class="topbar-right">
-          <button id="show-btn" class="show-btn glass" type="button">
+          <button id="show-btn" class="show-btn" type="button">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l11-6.5z" /></svg>
-            Guided show
+            <span class="show-label">Guided show</span>
           </button>
-          <nav id="shelf" class="segmented glass" aria-label="Datasets"></nav>
+          <nav id="shelf" class="segmented" aria-label="Datasets"></nav>
         </div>
       </header>
 
       <!-- Guided show: what the narrator is saying, and a way out -->
-      <div id="show-bar" class="show-bar glass" hidden>
+      <div id="show-bar" class="show-bar" hidden>
         <p id="show-caption" class="show-caption" aria-hidden="true"></p>
         <button id="show-stop" class="btn-text" type="button">Explore on my own</button>
       </div>
 
       <!-- Live readout -->
-      <aside id="readout" class="readout glass" aria-hidden="true">
+      <aside id="readout" class="readout" aria-hidden="true">
         <div class="readout-head">
           <span id="readout-source" class="chip">Center</span>
           <span id="readout-date" class="readout-date">—</span>
@@ -83,7 +83,7 @@
       </aside>
 
       <!-- Map tools -->
-      <div class="tools glass" role="group" aria-label="Globe controls">
+      <div class="tools" role="group" aria-label="Globe controls">
         <button id="zoom-in" class="icon-btn" type="button" aria-label="Zoom in" title="Zoom in (+)">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
         </button>
@@ -100,12 +100,12 @@
       </div>
 
       <!-- Status pill for detail view -->
-      <div id="detail-badge" class="status-pill glass" hidden aria-hidden="true"></div>
+      <div id="detail-badge" class="status-pill" hidden aria-hidden="true"></div>
 
       <!-- Bottom: legend + credit, then the player -->
       <footer class="bottom">
         <div class="meta">
-          <div id="legend" class="legend glass" hidden aria-hidden="true">
+          <div id="legend" class="legend" hidden aria-hidden="true">
             <div id="legend-label" class="legend-label"></div>
             <div id="legend-bar" class="legend-bar"></div>
             <div class="legend-scale"><span id="legend-min"></span><span id="legend-max"></span></div>
