@@ -192,6 +192,23 @@ On frame 700, the redrawn types match NASA's frame: the Saharan dust plume, the 
 
 Hovering a plume plays that type alone for 1.5 seconds, with the others ducked to about 12%.
 
+### Sky (Sun, Moon, planets, stars)
+
+No data files: `web/src/ephemeris.js` computes where the Sun, Moon and seven planets were
+on the date being shown (JPL approximate Keplerian elements; Astronomical Almanac Moon series),
+and `web/src/sky.js` draws them behind the globe. The sky turns with the Earth, so dragging
+the globe is like flying around it. Checked against known events, all within ~0.5°: the 2017
+and 2024 solar eclipses, the 2020 Jupiter–Saturn conjunction, equinox/solstice, a Mars
+opposition, Venus's greatest elongation, and Moon phases (new/quarter/full).
+
+Caveats:
+- The sky shows each day as at noon UTC (the true time of day would spin the whole sky once
+  per day of playback). The Sun therefore sits over roughly longitude 0°.
+- Bodies are drawn larger than life (the real Moon is half a degree across) so they are visible.
+- The ~65 named bright stars are real; the faint stars and Milky Way glow are illustrative,
+  placed around the real galactic plane.
+- Lightning has no exact dates, so its sky is fixed at the start of its period.
+
 ### Not built yet
 
 - **Forest height:** download the GeoTIFF by hand from <https://doi.org/10.5069/G9V12301>, which needs a free OpenTopography account, then write a `static` mode.

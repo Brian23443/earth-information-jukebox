@@ -569,6 +569,7 @@ function tick(now) {
     }
 
     globe.setEventsFrame(frame);
+    globe.setSkyTime(skyTimeMs());
     globe.update(dt);
 
     featureClock += dt;
@@ -636,6 +637,17 @@ function currentDate() {
   const [a, b] = d.map((s) => new Date(`${s}T00:00:00Z`).getTime());
   const t = Math.min(1, frame / Math.max(1, current.summary.frames - 1));
   return new Date(a + (b - a) * t).toISOString().slice(0, 10);
+}
+
+// Moment for the sky (Sun, Moon, planets): follows playback smoothly between days. Datasets
+// without exact dates (lightning) use the start of their period.
+function skyTimeMs() {
+  const d = current?.frames?.dates;
+  if (!d) return Date.now();
+  const [a, b] = d.map((s) => Date.parse(`${s}T12:00:00Z`));
+  if (current.frames.datesExact === false) return a;
+  const t = Math.min(1, frame / Math.max(1, current.summary.frames - 1));
+  return a + (b - a) * t;
 }
 
 // Value at a lat/lon: the fine explore grid first (land = no data), else the coarse summary.

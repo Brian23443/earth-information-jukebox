@@ -5,6 +5,7 @@
 //   x = -cos(phi) sin(theta), y = cos(theta), z = sin(phi) sin(theta)
 //   phi = (lon + 180) in radians, theta = (90 - lat) in radians
 import * as THREE from 'three';
+import { Sky } from './sky.js';
 
 const DEG = Math.PI / 180;
 const MAX_TILT = 30 * DEG; // keeps the per-band sound summaries honest (see the plan)
@@ -64,6 +65,11 @@ export class Globe {
     this.pivot = new THREE.Group(); // tilt (x) applied outside spin (y)
     this.pivot.add(this.sphere);
     this.scene.add(this.pivot);
+    // Stars, Sun, Moon and planets for the shown date; they turn with the Earth.
+    this.sky = new Sky({
+      parent: this.sphere, scene: this.scene, camera: this.camera, container,
+      pixelRatio: this.renderer.getPixelRatio(),
+    });
 
     this.raycaster = new THREE.Raycaster();
     this._bindPointer();
@@ -373,7 +379,13 @@ vec4 sampleSmooth(sampler2D tex, vec2 uv) {
       this.onZoom?.(this.zoomFactor);
     }
     this._apply();
+    this.sky.update(this.container.clientWidth, this.container.clientHeight);
     this.renderer.render(this.scene, this.camera);
+  }
+
+  // The moment shown (UTC ms): places the Sun, Moon and planets.
+  setSkyTime(ms) {
+    this.sky.setTime(ms);
   }
 
   // Lat/lon under a point in the container (pixels), or null if off the globe.
