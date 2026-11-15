@@ -93,6 +93,8 @@ export class Globe {
     this.eventPoints = null;
     this.atmosphere = this._makeAtmosphere();
     this.scene.add(this.atmosphere); // doesn't turn: the glow follows the light, not the land
+    this.halo = this._makeHalo();
+    this.scene.add(this.halo);
     // Stars, Sun, Moon and planets for the shown date; they turn with the Earth.
     // Drawn first in its own pass (see update), so it sits at infinity behind the Earth.
     this.sky = new Sky({ follow: this.sphere, mainCamera: this.camera, container });
@@ -604,6 +606,7 @@ vec4 sampleSmooth(sampler2D tex, vec2 uv) {
       this.onZoom?.(this.zoomFactor);
     }
     this._apply();
+    this.halo.quaternion.copy(this.camera.quaternion);
     this.sky.update(this.container.clientWidth, this.container.clientHeight, this.renderer.domElement.height);
     this.renderer.clear();
     this.renderer.render(this.sky.scene, this.sky.camera);
@@ -717,6 +720,37 @@ vec4 sampleSmooth(sampler2D tex, vec2 uv) {
     });
     const m = new THREE.Mesh(new THREE.SphereGeometry(1.045, 96, 48), mat);
     m.renderOrder = 2;
+    return m;
+  }
+
+  // A soft, wide glow behind the planet: a camera-facing disc at the globe's centre, so the
+  // globe hides its middle and only the light spilling past the edge shows. Brightest just
+  // outside the edge, fading out over about half a globe radius.
+  _makeHalo() {
+    const mat = new THREE.ShaderMaterial({
+      uniforms: { uStrength: { value: 0.32 } },
+      transparent: true,
+      depthWrite: false,
+      blending: THREE.CustomBlending,
+      blendSrc: THREE.OneFactor,
+      blendDst: THREE.OneFactor,
+      blendSrcAlpha: THREE.OneFactor,
+      blendDstAlpha: THREE.OneFactor,
+      vertexShader: /* glsl */ `
+        varying vec2 vP;
+        void main() { vP = position.xy; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
+      fragmentShader: /* glsl */ `
+        uniform float uStrength; varying vec2 vP;
+        void main() {
+          float r = length(vP);                       // globe radii from the centre
+          float g = exp(-pow(max(r - 0.98, 0.0) / 0.36, 1.4)) * smoothstep(2.05, 1.25, r);
+          vec3 c = mix(vec3(0.25, 0.45, 1.0), vec3(0.55, 0.4, 1.0), smoothstep(1.0, 1.8, r)) * g * uStrength;
+          gl_FragColor = vec4(c, max(c.r, max(c.g, c.b)));
+        }`,
+    });
+    const m = new THREE.Mesh(new THREE.PlaneGeometry(4.2, 4.2), mat);
+    m.renderOrder = -1; // before the globe; the globe's depth hides the middle
+    m.frustumCulled = false;
     return m;
   }
 
