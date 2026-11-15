@@ -560,7 +560,7 @@ vec4 sampleSmooth(sampler2D tex, vec2 uv) {
           // outline is 0. Brightest against the planet, fading out into space.
           float rim = pow(clamp(-dot(vN, v) / 0.29, 0.0, 1.0), 2.2);
           float lit = smoothstep(-0.35, 0.6, dot(vN, uSun)); // sunlit side of the rim
-          vec3 c = vec3(0.32, 0.6, 1.0) * rim * (0.08 + 0.92 * lit) * uAmount * 0.9;
+          vec3 c = vec3(0.32, 0.6, 1.0) * rim * rim * (0.05 + 0.95 * lit) * uAmount * 0.45; // subtle
           gl_FragColor = vec4(c, max(c.r, max(c.g, c.b)));
         }`,
     });

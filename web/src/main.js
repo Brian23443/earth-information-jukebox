@@ -208,6 +208,7 @@ async function useVideo(url, res, { syncFrom = null } = {}) {
   const old = video, oldTex = videoTexture;
   video = v;
   videoTexture = new THREE.VideoTexture(v);
+  showPausedFrames(v, videoTexture);
   quality.res = res; // set before videoColorFix() reads it
   if (!detail.on) globe.setTexture(videoTexture, videoColorFix());
   if (playing && !detail.on) v.play().catch(() => {});
@@ -216,6 +217,16 @@ async function useVideo(url, res, { syncFrom = null } = {}) {
   if (old) { old.pause(); old.removeAttribute('src'); old.load(); }
   oldTex?.dispose();
   return true;
+}
+
+// three.js copies a video into its texture only as the video plays, so a paused video
+// (switching datasets while paused, or seeking while paused) left the globe black or stale.
+// Copy the frame whenever one is ready or a seek lands.
+function showPausedFrames(v, tex) {
+  const upload = () => { if (videoTexture === tex) tex.needsUpdate = true; };
+  if (v.readyState >= 2) upload();
+  v.addEventListener('loadeddata', upload);
+  v.addEventListener('seeked', upload);
 }
 
 // Connection speed = a 3 MB test download of the 4096 file PLUS whatever the playing 2048
