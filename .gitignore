@@ -19,3 +19,4 @@ web/public/data/
 .DS_Store
 web/public/sky/
 web/public/cover/
+web/public/show/voice/*.mp3
