@@ -111,7 +111,7 @@ $('start-btn').addEventListener('click', async () => {
   $('start').hidden = true;
   $('app').classList.remove('intro');
   $('globe').focus(); // keyboard users land on the globe, ready to spin
-  setTimeout(preloadOtherDatasets, 1500);
+  setTimeout(preloadOtherDatasets, 400); // sooner = more first switches find everything ready
 });
 $('start-btn').focus();
 

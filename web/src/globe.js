@@ -667,7 +667,7 @@ vec4 sampleSmooth(sampler2D tex, vec2 uv) {
     if (!c) return;
     const u = this.uniforms;
     if (!c.leaving) {
-      this.spin += (this.reducedMotion ? 0 : 4 * DEG) * dt; // the planet turns on its own
+      this.spin += (this.reducedMotion ? 0 : this.autoSpin) * dt; // the planet turns on its own
       this._coverFrame(1);
       return;
     }
@@ -692,7 +692,9 @@ vec4 sampleSmooth(sampler2D tex, vec2 uv) {
         u.coverOn.value = 0;
         this.cover = null;
         this.camera.clearViewOffset();
-        this.idleFor = 0;
+        // The glide ends at rest; ease the auto-spin straight back in (resetting the idle
+        // timer left the planet still for 4 s after the cover, as if it had frozen).
+        this.idleFor = 4;
         this.sky.showBodies(true);
         c.resolve?.();
       }
