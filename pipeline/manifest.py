@@ -67,7 +67,7 @@ DATASETS = {
     "lightning": {
         "title": "Lightning seen from the Space Station",
         "svs_page": "https://svs.gsfc.nasa.gov/5011/",
-        "credit": "Visualization: NASA's Scientific Visualization Studio. Data: ISS LIS (NASA GHRC).",
+        "credit": "Visualization: NASA's Scientific Visualization Studio. Data: ISS LIS (NASA GHRC). Night map: NASA Earth Observatory Black Marble 2016.",
         # 4096x2048, 60 fps, ~350 MB. Downscaled to 2048x1024 for the texture.
         "movie": f"{SVS}/a005000/a005011/iss_lightning_sos_yearly_07312023_2048p60.mp4",
         # 6,002 frames at 60 fps. Every 4th = 15 summaries/s, plenty for percussion.

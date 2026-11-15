@@ -134,10 +134,17 @@ python pipeline/summarize.py lightning
 ```bash
 python pipeline/events.py lightning
 ```
+```bash
+python pipeline/nightmap.py
+```
+```bash
+python pipeline/check_events.py --old data/work/lightning_events_v1.bin
+```
 
-**Vector lightning:** video is the worst case for a static gray map with tiny one-color dots; it blurred them. `events.py` (about 4 minutes) stores every flash dot once: position, size, and the frames it's visible, 824,854 flashes in 7.4 MB. It also saves the empty first frame as a 4096×2048 base map (0.6 MB). The globe draws the flashes as GPU points that stay sharp at any zoom, with a brief white-hot pop when each appears.
+**Vector lightning:** video is the worst case for a static map with tiny one-color dots; it blurred them. `events.py` (about 6 minutes) stores every flash once, with its real shape: 824,854 flashes in `events.bin` (13 MB). Flashes under 20 px or close to round become soft dots (centre, radius, NASA's peak brightness); the other 181,840, mostly merged storm clusters, keep NASA's own pixels in `shapes.png`, an 8192×6700 greyscale atlas (16 MB; big clusters at 1/2 or 1/4 resolution, since NASA draws soft dots). The globe redraws each flash as one GPU point that maps its screen pixels back into the shape, so shapes follow the globe's curvature and stay sharp at any zoom. Each flash pops white-hot, burns yellow, then cools to orange in a half-second afterglow, with a soft halo. Overlapping flashes take the brightest value (adding them blew busy storms out to white).
 
-- **Checked against NASA's frames:** 85% of NASA's lit pixels are covered by a redrawn dot, and 78% of drawn pixels are real flashes. The gap comes from merged storm blobs drawn as round dots.
+- **Checked against NASA's frames** (`check_events.py`, 8 frames across the movie): we light 96.5% of NASA's lit pixels, and 76% of what we light is lit in NASA's frame. The previous round-dot version (capped at 3 px so merged blobs didn't balloon) lit only 44%, at 77%. The overdraw comes from drawing each flash's shape at its largest for its whole lifetime.
+- **Night map:** NASA Black Marble 2016 (`nightmap.py`, from Earth Observatory's Earth at Night maps), recoloured from yellow-orange to cool blue-white so city lights can't be mistaken for lightning. 8192 and 4096 wide; the site picks by GPU and screen.
 - **Fallback:** `?events=0` switches back to the video version.
 
 ### Aerosols

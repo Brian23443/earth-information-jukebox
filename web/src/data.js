@@ -121,24 +121,46 @@ export class GridCache {
 
 // events.bin: 9-byte records (uint16 x, y, start, end; uint8 radius*10), little-endian.
 // Unpacked into typed arrays the globe hands straight to the GPU.
-async function loadEvents(dir, optional) {
+// Lightning flashes from pipeline/events.py: 16-byte records + a shape atlas (NASA's own
+// pixels for every flash bigger than a tiny dot). Night base maps from pipeline/nightmap.py.
+async function loadEvents(dir, optional, has) {
   const meta = await optional('events.json');
   if (!meta) return null;
-  const buf = await (await fetch(`${dir}/events.bin`)).arrayBuffer();
+  const [buf, night8, night4] = await Promise.all([
+    fetch(`${dir}/events.bin`).then((r) => r.arrayBuffer()),
+    has('night_8k.jpg'),
+    has('night_4k.jpg'),
+  ]);
   const dv = new DataView(buf);
   const n = meta.count;
   const ev = {
-    count: n, width: meta.width, height: meta.height, base: `${dir}/base.jpg`,
-    x: new Uint16Array(n), y: new Uint16Array(n),
-    start: new Float32Array(n), end: new Float32Array(n), r: new Float32Array(n),
+    count: n, width: meta.width, height: meta.height, frames: meta.frames,
+    base: `${dir}/base.jpg`,
+    night: night8 || night4 ? { 8192: night8 ? `${dir}/night_8k.jpg` : null, 4096: night4 ? `${dir}/night_4k.jpg` : null } : null,
+    atlas: meta.shapes ? { url: `${dir}/shapes.png`, size: meta.atlas } : null,
+    cx: new Float32Array(n), cy: new Float32Array(n),
+    start: new Float32Array(n), end: new Float32Array(n),
+    // Shape in the atlas (w, h, ax, ay in texels; w = 0 for a round dot), and
+    // (radius, peak) for round dots or (0, scale) for shapes.
+    shape: new Float32Array(n * 4), dot: new Float32Array(n * 2),
   };
-  for (let i = 0, o = 0; i < n; i++, o += 9) {
-    ev.x[i] = dv.getUint16(o, true);
-    ev.y[i] = dv.getUint16(o + 2, true);
+  for (let i = 0, o = 0; i < n; i++, o += 16) {
+    ev.cx[i] = dv.getUint16(o, true) / 4;
+    ev.cy[i] = dv.getUint16(o + 2, true) / 4;
     ev.start[i] = dv.getUint16(o + 4, true);
     ev.end[i] = dv.getUint16(o + 6, true);
-    ev.r[i] = dv.getUint8(o + 8);
+    ev.shape[i * 4] = dv.getUint8(o + 8);
+    ev.shape[i * 4 + 1] = dv.getUint8(o + 9);
+    ev.shape[i * 4 + 2] = dv.getUint16(o + 12, true);
+    ev.shape[i * 4 + 3] = dv.getUint16(o + 14, true);
+    ev.dot[i * 2] = dv.getUint8(o + 10) / 10;
+    // Round dot: peak brightness 0-1. Shape: source pixels per atlas texel (1, 2 or 4).
+    ev.dot[i * 2 + 1] = ev.shape[i * 4] > 0 ? dv.getUint8(o + 11) : dv.getUint8(o + 11) / 255;
   }
+  // Longest a flash stays on screen: the globe only draws flashes that started within it.
+  let maxLife = 0;
+  for (let i = 0; i < n; i++) maxLife = Math.max(maxLife, ev.end[i] - ev.start[i]);
+  ev.maxLife = maxLife;
   return ev;
 }
 
@@ -183,7 +205,7 @@ export async function loadDataset(ds) {
     const land = (await has('land.jpg')) ? { image: `${dir}/land.jpg`, mask: `${dir}/landmask.png` } : null;
     if (hires) hires.dir = `${dir}/hires`;
     // Vector events (lightning, from pipeline/events.py) + their static base map.
-    const events = await loadEvents(dir, optional);
+    const events = await loadEvents(dir, optional, has);
     // Byte size of the starting video lets main.js turn buffering speed into Mbps.
     const videoBytes = typeof (has2048 || has4096) === 'number' ? (has2048 || has4096) : null;
     return { ds, summary, frames, videoUrl, videoUrlHigh, videoUrlMax, videoBytes, events, grids, hires, colorFix, land, demo: false };

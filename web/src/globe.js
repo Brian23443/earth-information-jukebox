@@ -27,6 +27,19 @@ const KEY_TAP_KICK = 0.45;        // share of full speed a fresh press starts at
 const ARROWS = new Set(['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown']);
 const VEL_WINDOW_MS = 100; // release velocity = average over the last 100 ms of drag
 
+const EVENT_AFTERGLOW = 8; // summary frames a finished flash keeps fading (~0.5 s at 1x)
+
+// First index in a sorted array whose value is >= x.
+function lowerBound(arr, x) {
+  let lo = 0, hi = arr.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (arr[mid] < x) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo;
+}
+
 export function latLonToLocal(lat, lon, out = new THREE.Vector3()) {
   const phi = (lon + 180) * DEG;
   const theta = (90 - lat) * DEG;
@@ -149,72 +162,151 @@ export class Globe {
   // Vector events (lightning): every flash once, drawn as a GPU point only while
   // start <= frame < end. Sharp at any zoom, no video needed.
   // events: { x, y, start, end, r (Float32Array/Uint16Array...), count, width, height }
-  setEvents(events) {
+  // Lightning (pipeline/events.py): every flash redrawn from NASA's own pixels (a shape
+  // atlas) or as a round dot, sharp at any zoom, with a halo and a short afterglow.
+  // Each flash is one GPU point; the vertex shader works out how one source pixel lands on
+  // screen at that spot (east and south vectors), and the fragment shader maps the point's
+  // pixels back into the flash's shape, so shapes stay true to the globe's curvature.
+  setEvents(events, atlasTexture = null) {
     this.clearEvents();
     if (!events) return;
     const { count, width, height } = events;
     const pos = new Float32Array(count * 3);
+    const time = new Float32Array(count * 2);
     const v = new THREE.Vector3();
     for (let i = 0; i < count; i++) {
-      const lon = (events.x[i] / width) * 360 - 180;
-      const lat = 90 - (events.y[i] / height) * 180;
+      const lon = (events.cx[i] / width) * 360 - 180;
+      const lat = 90 - (events.cy[i] / height) * 180;
       latLonToLocal(lat, lon, v).multiplyScalar(1.0015).toArray(pos, i * 3); // just above the surface
+      time[i * 2] = events.start[i];
+      time[i * 2 + 1] = events.end[i];
     }
     const geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-    geo.setAttribute('aStart', new THREE.BufferAttribute(events.start, 1));
-    geo.setAttribute('aEnd', new THREE.BufferAttribute(events.end, 1));
-    geo.setAttribute('aRadius', new THREE.BufferAttribute(events.r, 1));
+    geo.setAttribute('aTime', new THREE.BufferAttribute(time, 2));
+    geo.setAttribute('aShape', new THREE.BufferAttribute(events.shape, 4));
+    geo.setAttribute('aDot', new THREE.BufferAttribute(events.dot, 2));
     geo.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 1.01);
+    geo.setDrawRange(0, 0);
+    const gl = this.renderer.getContext();
+    this.eventStarts = events.start;
+    this.eventSpan = events.maxLife + EVENT_AFTERGLOW;
     this.eventUniforms = {
       uFrame: { value: 0 },
-      uPxPerUnit: { value: 1 },
-      uRadPerSrcPx: { value: (2 * Math.PI) / width },
+      uAfter: { value: EVENT_AFTERGLOW },
+      uViewport: { value: new THREE.Vector2(1, 1) },
+      uSrc: { value: new THREE.Vector2(width, height) },
+      uMaxPoint: { value: Math.min(512, gl.getParameter(gl.ALIASED_POINT_SIZE_RANGE)[1]) },
+      uAtlas: { value: atlasTexture },
+      uAtlasSize: { value: new THREE.Vector2(...(events.atlas?.size ?? [1, 1])) },
     };
     const mat = new THREE.ShaderMaterial({
       uniforms: this.eventUniforms,
       transparent: true,
       depthWrite: false,
       depthTest: false, // far-side culling happens in the vertex shader
-      vertexShader: `
-        attribute float aStart;
-        attribute float aEnd;
-        attribute float aRadius;
+      // Light, kept at the brightest of overlapping flashes (adding them blew busy storms
+      // out to white; NASA's movie keeps them yellow). Alpha follows the light so the
+      // transparent canvas composites it correctly past the globe's edge.
+      blending: THREE.CustomBlending,
+      blendEquation: THREE.MaxEquation,
+      blendEquationAlpha: THREE.MaxEquation,
+      vertexShader: /* glsl */ `
+        attribute vec2 aTime;   // start, end (summary frames)
+        attribute vec4 aShape;  // w, h, atlas x, atlas y (w = 0: round dot)
+        attribute vec2 aDot;    // round dot: radius (source px), peak; shape: (0, source px per texel)
         uniform float uFrame;
-        uniform float uPxPerUnit;
-        uniform float uRadPerSrcPx;
+        uniform float uAfter;
+        uniform vec2 uViewport; // device px
+        uniform vec2 uSrc;      // source map size (4096 x 2048)
+        uniform float uMaxPoint;
+        varying vec2 vEast;     // screen px per source px east
+        varying vec2 vSouth;    // screen px per source px south (+y in the map)
+        varying float vSize;
+        varying vec4 vShape;
+        varying vec2 vDot;
         varying float vAge;
+        varying float vSince;
+        vec2 px(vec4 clip) { return clip.xy / clip.w * 0.5 * uViewport; }
+        void hide() { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); gl_PointSize = 0.0; }
         void main() {
-          if (uFrame < aStart || uFrame >= aEnd) {
-            gl_Position = vec4(2.0, 2.0, 2.0, 1.0); // off screen
-            gl_PointSize = 0.0;
-            return;
-          }
+          float age = uFrame - aTime.x;
+          float since = uFrame - aTime.y; // >= 0: finished, fading out
+          if (age < 0.0 || since >= uAfter) { hide(); return; }
           vec4 mv = modelViewMatrix * vec4(position, 1.0);
-          // Hide points on the far side ourselves (depth testing against the sphere
-          // clipped round dots in half near the limb).
+          // Hide flashes on the far side ourselves (depth testing clipped them at the limb).
           vec3 normalView = normalize(normalMatrix * position);
-          if (dot(normalView, normalize(-mv.xyz)) < 0.02) {
-            gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
-            gl_PointSize = 0.0;
-            return;
-          }
-          gl_Position = projectionMatrix * mv;
-          // Merged storm blobs were stored at their largest size: cap so they stay dots.
-          float worldRadius = clamp(aRadius / 10.0 * 0.85, 0.8, 3.0) * uRadPerSrcPx;
-          gl_PointSize = max(2.0 * worldRadius * uPxPerUnit / -mv.z, 1.6);
-          vAge = uFrame - aStart;
+          if (dot(normalView, normalize(-mv.xyz)) < 0.02) { hide(); return; }
+          vec4 clip = projectionMatrix * mv;
+          vec3 p = normalize(position);
+          vec3 east = vec3(p.z, 0.0, -p.x) * (6.2831853 / uSrc.x);
+          vec3 north = normalize(vec3(0.0, 1.0, 0.0) - p * p.y) * (3.1415927 / uSrc.y);
+          vec2 s0 = px(clip);
+          vEast = px(projectionMatrix * modelViewMatrix * vec4(position + east, 1.0)) - s0;
+          vSouth = px(projectionMatrix * modelViewMatrix * vec4(position - north, 1.0)) - s0;
+          vec2 halfSize = aShape.x > 0.0 ? aShape.xy * 0.5 * aDot.y : vec2(aDot.x + 3.0);
+          vec2 ext = abs(vEast) * halfSize.x + abs(vSouth) * halfSize.y;
+          vSize = clamp(2.0 * max(ext.x, ext.y) + 2.0, 2.0, uMaxPoint);
+          gl_PointSize = vSize;
+          gl_Position = clip;
+          vShape = aShape;
+          vDot = aDot;
+          vAge = age;
+          vSince = since;
         }`,
-      fragmentShader: `
+      fragmentShader: /* glsl */ `
+        uniform sampler2D uAtlas;
+        uniform vec2 uAtlasSize;
+        uniform float uAfter;
+        varying vec2 vEast;
+        varying vec2 vSouth;
+        varying float vSize;
+        varying vec4 vShape;
+        varying vec2 vDot;
         varying float vAge;
+        varying float vSince;
         void main() {
-          float d = length(gl_PointCoord - 0.5) * 2.0;
-          float a = 1.0 - smoothstep(0.65, 1.0, d);
-          if (a <= 0.0) discard;
-          // New flashes pop white-hot, then settle to NASA's yellow.
+          vec2 sp = (gl_PointCoord - 0.5) * vSize;
+          sp.y = -sp.y; // gl_PointCoord runs down the screen
+          mat2 J = mat2(vEast, vSouth);
+          if (abs(determinant(J)) < 1e-8) discard;
+          vec2 m = inverse(J) * sp; // offset in source pixels (x east, y south)
+          float core, glow;
+          if (vShape.x > 0.0) {
+            vec2 local = m / vDot.y + vShape.xy * 0.5; // atlas texels
+            if (any(lessThan(local, vec2(0.0))) || any(greaterThan(local, vShape.xy))) discard;
+            vec2 uv = (vShape.zw + local) / uAtlasSize;
+            float t = texture2D(uAtlas, uv).r;
+            core = t * smoothstep(0.02, 0.2, t); // clean edge where NASA's brightness ends
+            // Halo: NASA's brightness spread ~2 source px (8 taps around this point).
+            vec2 r = vec2(max(1.8 / vDot.y, 0.6)) / uAtlasSize;
+            float g = 0.0;
+            for (int k = 0; k < 8; k++) {
+              float ang = float(k) * 0.7853982;
+              g += texture2D(uAtlas, uv + r * vec2(cos(ang), sin(ang))).r;
+            }
+            glow = max(t, g * 0.2);
+          } else {
+            // Tiny flash: keep it at least ~1 screen pixel wide so it never vanishes.
+            float r = max(vDot.x, 0.6 / max(length(vEast), 1e-3));
+            float aa = 0.5 / max(length(vEast), 1e-3);
+            float d = length(m);
+            // Soft dot, brightest in the middle, like NASA's (not a flat disc).
+            float edge = 1.0 - smoothstep(r - aa, r + aa * 2.0, d);
+            core = vDot.y * edge * mix(0.55, 1.0, sqrt(max(0.0, 1.0 - d * d / (r * r + 1e-3))));
+            glow = vDot.y * exp(-pow(max(d - r * 0.5, 0.0) / 1.6, 2.0));
+          }
+          // New flashes pop white-hot, burn NASA's yellow, then cool to orange as they fade.
           float hot = 1.0 - smoothstep(0.0, 3.0, vAge);
-          vec3 yellow = vec3(1.0, 0.86, 0.12);
-          gl_FragColor = vec4(mix(yellow, vec3(1.0), hot * 0.85), a);
+          float after = clamp(vSince / uAfter, 0.0, 1.0);
+          float fade = vSince < 0.0 ? 1.0 : exp(-vSince / (uAfter * 0.3)) * (1.0 - after);
+          vec3 coreColor = mix(vec3(1.0, 0.86, 0.12), vec3(1.0), hot * 0.85);
+          coreColor = mix(coreColor, vec3(1.0, 0.45, 0.1), smoothstep(0.0, 0.5, after) * step(0.0, vSince));
+          // Max-blended, so take the brighter of the flash and its halo rather than adding.
+          vec3 c = max(coreColor * min(core * 1.15, 1.0), vec3(1.0, 0.58, 0.14) * glow * 0.45) * fade;
+          float a = max(c.r, max(c.g, c.b));
+          if (a < 0.003) discard;
+          gl_FragColor = vec4(c, a);
         }`,
     });
     this.eventPoints = new THREE.Points(geo, mat);
@@ -223,8 +315,18 @@ export class Globe {
     this._updateEventScale();
   }
 
+  setEventAtlas(tex) {
+    if (this.eventUniforms) this.eventUniforms.uAtlas.value = tex;
+  }
+
+  // Only flashes that started within the longest lifetime (+ afterglow) can be showing, and
+  // they're sorted by start: draw just that slice (a few thousand of 825k).
   setEventsFrame(frame) {
-    if (this.eventUniforms) this.eventUniforms.uFrame.value = frame;
+    if (!this.eventUniforms) return;
+    this.eventUniforms.uFrame.value = frame;
+    const lo = lowerBound(this.eventStarts, frame - this.eventSpan);
+    const hi = lowerBound(this.eventStarts, frame + 1e-3);
+    this.eventPoints.geometry.setDrawRange(lo, Math.max(0, hi - lo));
   }
 
   clearEvents() {
@@ -234,14 +336,15 @@ export class Globe {
     this.eventPoints.material.dispose();
     this.eventPoints = null;
     this.eventUniforms = null;
+    this.eventStarts = null;
   }
 
   _updateEventScale() {
     if (!this.eventUniforms) return;
-    // Device pixels per world unit at distance 1 (divided by depth in the shader).
-    const h = this.renderer.domElement.height || 1;
-    this.eventUniforms.uPxPerUnit.value = h / (2 * Math.tan((this.camera.fov / 2) * DEG));
+    const c = this.renderer.domElement;
+    this.eventUniforms.uViewport.value.set(c.width || 1, c.height || 1);
   }
+
 
   _extendShader() {
     const blank = new THREE.DataTexture(new Uint8Array([0, 0, 0, 255]), 1, 1);

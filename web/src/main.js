@@ -117,6 +117,18 @@ const quality = { res: null, probeMbps: null, note: '', locked: false, token: 0 
 
 let landTextures = [];
 let baseTexture = null; // static base map for vector-event datasets (lightning)
+let eventAtlas = null; // lightning flash shapes
+
+// NASA Black Marble under the lightning: 8192 wide where the GPU and screen can use it.
+function nightMapUrl(ev) {
+  if (!ev.night) return null;
+  const big = globe.maxTextureSize >= 8192 && Math.max(screen.width, screen.height) * devicePixelRatio >= 1800;
+  return (big && ev.night[8192]) || ev.night[4096] || ev.night[8192];
+}
+function eventsDetailWidth(ev) {
+  const url = nightMapUrl(ev);
+  return url && url === ev.night?.[8192] ? 8192 : ev.width;
+}
 
 // Color correction for whichever video is playing (pipeline/landlayer.py fits one per file).
 function videoColorFix() {
@@ -268,6 +280,8 @@ async function selectDataset(ds) {
   videoTexture = null;
   quality.token++; // cancel any upgrade still in flight for the previous dataset
   globe.clearEvents();
+  eventAtlas?.dispose();
+  eventAtlas = null;
   baseTexture?.dispose();
   baseTexture = null;
   if (loaded.events && params.get('events') !== '0') {
@@ -275,14 +289,30 @@ async function selectDataset(ds) {
     // The frame clock runs on its own (tick() advances `frame` when there is no video).
     quality.res = null;
     quality.note = `vector events (${loaded.events.count.toLocaleString()} flashes)`;
-    globe.setEvents(loaded.events);
+    const ev = loaded.events;
+    globe.setEvents(ev);
+    if (ev.atlas) {
+      // NASA's pixels for every flash shape. Exact texels, no mipmaps (they'd bleed between
+      // neighbouring shapes) and top row first, matching the atlas coordinates.
+      new THREE.TextureLoader().load(ev.atlas.url, (tex) => {
+        if (current !== loaded) { tex.dispose(); return; }
+        tex.colorSpace = THREE.NoColorSpace;
+        tex.flipY = false;
+        tex.generateMipmaps = false;
+        tex.minFilter = THREE.LinearFilter;
+        tex.needsUpdate = true;
+        eventAtlas?.dispose();
+        eventAtlas = tex;
+        globe.setEventAtlas(tex);
+      });
+    }
     // Placeholder until the base map arrives (the previous dataset's video is gone, and
     // drawing it logged "texImage2D: no video").
-    const placeholder = new THREE.DataTexture(new Uint8Array([12, 14, 18, 255]), 1, 1);
+    const placeholder = new THREE.DataTexture(new Uint8Array([6, 8, 14, 255]), 1, 1);
     placeholder.needsUpdate = true;
     globe.setTexture(placeholder);
     baseTexture = placeholder;
-    loadStill(loaded.events.base)
+    loadStill(nightMapUrl(ev) ?? ev.base)
       .then((tex) => {
         if (current !== loaded) { tex.dispose(); return; }
         baseTexture?.dispose(); // the placeholder
@@ -309,7 +339,7 @@ async function selectDataset(ds) {
 
   // Zoom limit follows the sharpest texture this dataset has.
   // (Vector events are sharp at any size, so their limit is the base map's width.)
-  globe.setDetailWidth(loaded.hires?.size?.[0] ?? (loaded.events && params.get('events') !== '0' ? loaded.events.width : 2048));
+  globe.setDetailWidth(loaded.hires?.size?.[0] ?? (loaded.events && params.get('events') !== '0' ? eventsDetailWidth(loaded.events) : 2048));
 
   // Sharp static land over the video (loads in the background; the video shows until then).
   globe.setLandLayer(null, null);

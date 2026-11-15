@@ -38,7 +38,7 @@ export const DATASETS = [
       max: 'many',
     },
     svs: 'https://svs.gsfc.nasa.gov/5011/',
-    credit: "Visualization: NASA's Scientific Visualization Studio. Data: ISS LIS (NASA GHRC).",
+    credit: "Visualization: NASA's Scientific Visualization Studio. Data: ISS LIS (NASA GHRC). Night map: NASA Earth Observatory Black Marble 2016.",
   },
   {
     id: 'aerosols',
