@@ -1,0 +1,25 @@
+{
+  "frames": 552,
+  "bands": 4,
+  "cols": 256,
+  "bandEdges": [
+    -90,
+    -45,
+    0,
+    45,
+    90
+  ],
+  "vmin": 0.0,
+  "vmax": 1.0,
+  "units": "share",
+  "mode": "classes",
+  "grids": true,
+  "gridEncoding": "0 = none, else type*64 + 1 + strength(0..62)",
+  "classes": [
+    "carbon",
+    "dust",
+    "seasalt",
+    "sulfate"
+  ],
+  "layout": "frames,bands(south first),cols,[value,share]; classes.bin: frames,bands,cols,4"
+}

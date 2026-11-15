@@ -1,0 +1,18 @@
+{
+  "frames": 501,
+  "bands": 4,
+  "cols": 256,
+  "bandEdges": [
+    -90,
+    -45,
+    0,
+    45,
+    90
+  ],
+  "vmin": 0.0,
+  "vmax": 32.0,
+  "units": "\u00b0C",
+  "mode": "legend",
+  "layout": "frames,bands(south first),cols(lon -180..180),[value,share]",
+  "grids": true
+}

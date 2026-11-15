@@ -1,0 +1,15 @@
+{
+  "fps": 30.0,
+  "movieFrames": 2001,
+  "frameSetCount": 2001,
+  "offset": 0,
+  "movieStride": 4,
+  "sourceSize": [
+    2048,
+    1024
+  ],
+  "dates": [
+    "2007-03-25",
+    "2008-03-03"
+  ]
+}

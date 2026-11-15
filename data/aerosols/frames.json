@@ -1,0 +1,16 @@
+{
+  "fps": 30.0,
+  "movieFrames": 2206,
+  "frameSetCount": 2206,
+  "offset": 0,
+  "movieStride": 4,
+  "sourceSize": [
+    2048,
+    1024
+  ],
+  "dates": [
+    "2024-08-01",
+    "2024-09-14"
+  ],
+  "datesExact": true
+}

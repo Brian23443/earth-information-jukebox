@@ -1,0 +1,12 @@
+{
+  "version": 3,
+  "count": 1861901,
+  "flashes": 824854,
+  "frames": 1501,
+  "width": 4096,
+  "height": 2048,
+  "recordBytes": 10,
+  "peakSpacing": 2,
+  "peakMin": 0.08,
+  "layout": "uint16 cx4, cy4, start, end; uint8 r10, peak (little-endian)"
+}

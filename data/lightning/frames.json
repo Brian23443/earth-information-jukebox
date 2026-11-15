@@ -1,0 +1,16 @@
+{
+  "fps": 60.0,
+  "movieFrames": 6002,
+  "frameSetCount": 6002,
+  "offset": 0,
+  "movieStride": 4,
+  "sourceSize": [
+    4096,
+    2048
+  ],
+  "dates": [
+    "2017-03-01",
+    "2023-07-31"
+  ],
+  "datesExact": false
+}
