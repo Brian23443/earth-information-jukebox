@@ -241,7 +241,7 @@ export class Sky {
 
   // ms: the moment being shown (UTC). Cheap; skipped unless the date moved.
   setTime(ms) {
-    if (this.lastMs !== null && Math.abs(ms - this.lastMs) < 600000) return; // 10 min
+    if (this.lastMs !== null && Math.abs(ms - this.lastMs) < 60000) return; // 1 min
     this.lastMs = ms;
     const pos = skyPositions(ms);
     this.group.rotation.y = -noonSiderealDeg(ms) * DEG;

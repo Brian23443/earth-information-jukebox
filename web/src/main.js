@@ -568,7 +568,7 @@ function tick(now) {
     }
 
     globe.setEventsFrame(frame);
-    globe.setSkyTime(skyTimeMs());
+    globe.setSkyTime(smoothSkyMs(dt));
     globe.update(dt);
 
     featureClock += dt;
@@ -647,6 +647,27 @@ function skyTimeMs() {
   if (current.frames.datesExact === false) return a;
   const t = Math.min(1, frame / Math.max(1, current.summary.frames - 1));
   return a + (b - a) * t;
+}
+
+// The video only reports a new frame ~30 times a second (fewer when frames drop), while the
+// screen draws 60-120. At ~5 days of data per second the Moon moves ~70°/s, so stepping it
+// once per video frame made it jump more than its own width. Advance the sky's clock every
+// screen frame at the playback rate and pull it gently toward the video's actual time.
+let skyMs = null;
+function smoothSkyMs(dt) {
+  const target = skyTimeMs();
+  const d = current?.frames?.dates;
+  const exact = d && current.frames.datesExact !== false;
+  if (skyMs === null || !playing || !exact || detail.on || Math.abs(target - skyMs) > 2 * 86400000) {
+    skyMs = target; // paused, seeking, looping, or no dates: just follow
+    return skyMs;
+  }
+  const meta = current.frames;
+  const span = Date.parse(`${d[1]}T12:00:00Z`) - Date.parse(`${d[0]}T12:00:00Z`);
+  const seconds = (current.summary.frames * (meta.movieStride ?? 1)) / (meta.fps ?? 30); // movie length at 1x
+  skyMs += (span / seconds) * speed * dt;
+  skyMs += (target - skyMs) * Math.min(1, dt * 4); // drift correction, ~0.25 s
+  return skyMs;
 }
 
 // Value at a lat/lon: the fine explore grid first (land = no data), else the coarse summary.
