@@ -329,7 +329,9 @@ async function selectDataset(ds) {
   for (const b of $('shelf').children) b.setAttribute('aria-pressed', String(b.dataset.id === ds.id));
   $('credit').innerHTML =
     `${ds.credit} <a href="${ds.svs}" target="_blank" rel="noopener">Source</a>` +
-    (loaded.demo ? ' · <strong>Demo data</strong>: the pipeline hasn\'t been run yet.' : '');
+    (loaded.demo ? ' · <strong>Demo data</strong>: the pipeline hasn\'t been run yet.' : '') +
+    '<br>Sky: NASA SVS star map and LRO Moon; Sun and planets ' +
+    '<a href="https://www.solarsystemscope.com/textures/" target="_blank" rel="noopener">Solar System Scope</a> (CC BY 4.0).';
   updateLegend(ds);
   const dates = loaded.frames?.dates;
   $('time-start').textContent = dates ? formatDay(dates[0]) : '';
@@ -383,8 +385,8 @@ $('scrub').addEventListener('input', (e) => {
   if (current) frame = t * current.summary.frames;
   if (detail.on) enterDetail(); // re-snap to the keyframe nearest the new time
 });
-$('spin-left').addEventListener('click', () => globe.spinBy(0.35 / Math.sqrt(globe.zoomFactor)));
-$('spin-right').addEventListener('click', () => globe.spinBy(-0.35 / Math.sqrt(globe.zoomFactor)));
+$('spin-left').addEventListener('click', () => globe.spinBy(0.35 / Math.sqrt(Math.max(1, globe.zoomFactor))));
+$('spin-right').addEventListener('click', () => globe.spinBy(-0.35 / Math.sqrt(Math.max(1, globe.zoomFactor))));
 $('zoom-in').addEventListener('click', () => globe.zoomBy(1.6));
 $('zoom-out').addEventListener('click', () => globe.zoomBy(1 / 1.6));
 $('mute').addEventListener('click', (e) => {

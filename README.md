@@ -194,19 +194,29 @@ Hovering a plume plays that type alone for 1.5 seconds, with the others ducked t
 
 ### Sky (Sun, Moon, planets, stars)
 
-No data files: `web/src/ephemeris.js` computes where the Sun, Moon and seven planets were
-on the date being shown (JPL approximate Keplerian elements; Astronomical Almanac Moon series),
-and `web/src/sky.js` draws them behind the globe. The sky turns with the Earth, so dragging
-the globe is like flying around it. Checked against known events, all within ~0.5°: the 2017
-and 2024 solar eclipses, the 2020 Jupiter–Saturn conjunction, equinox/solstice, a Mars
-opposition, Venus's greatest elongation, and Moon phases (new/quarter/full).
+`web/src/ephemeris.js` computes where the Sun, Moon and seven planets were on the date being
+shown (JPL approximate Keplerian elements; Astronomical Almanac Moon series), and
+`web/src/sky.js` draws them behind the globe in a separate pass from the Earth's center, so
+the sky sits at infinity: zooming out (up to 4x the default distance) never shifts it. It
+turns with the Earth, so dragging the globe is like flying around it. Checked against known
+events, all within ~0.5°: the 2017 and 2024 solar eclipses, the 2020 Jupiter-Saturn
+conjunction, equinox/solstice, a Mars opposition, Venus's greatest elongation, and Moon
+phases (new/quarter/full).
+
+Textures (`python pipeline/skymaps.py` -> `web/public/sky/`, ~12 MB; raw files in
+`data/raw/sky/`, fetched by hand):
+- Stars: NASA SVS [Deep Star Maps 2020](https://svs.gsfc.nasa.gov/4851), `starmap_2020_8k.exr`
+  (real Hipparcos/Tycho/Gaia stars and Milky Way, J2000), tone mapped to an 8192x4096 sRGB JPEG.
+- Moon: NASA SVS [CGI Moon Kit](https://svs.gsfc.nasa.gov/4720), `lroc_color_2k.jpg` (LRO).
+- Sun, planets, Saturn's rings: [Solar System Scope](https://www.solarsystemscope.com/textures/)
+  2k maps (CC BY 4.0), built from NASA mission imagery. Ring texture placed at 1.215-2.335
+  Saturn radii, which puts the Cassini division at 1.95-2.03 where it is.
 
 Caveats:
 - The sky shows each day as at noon UTC (the true time of day would spin the whole sky once
   per day of playback). The Sun therefore sits over roughly longitude 0°.
 - Bodies are drawn larger than life (the real Moon is half a degree across) so they are visible.
-- The ~65 named bright stars are real; the faint stars and Milky Way glow are illustrative,
-  placed around the real galactic plane.
+- Every body is drawn at the same distance; only directions are real (no depth or parallax).
 - Lightning has no exact dates, so its sky is fixed at the start of its period.
 
 ### Not built yet

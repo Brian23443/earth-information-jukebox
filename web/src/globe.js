@@ -11,6 +11,7 @@ const DEG = Math.PI / 180;
 const MAX_TILT = 30 * DEG; // keeps the per-band sound summaries honest (see the plan)
 const FAR = 4.0;           // camera distance when fully zoomed out (leaves room for the overlays)
 const NEAR = 1.18;         // closest zoom ever (0.18 globe radii above the surface)
+const OUT_FACTOR = 4;      // zoom out to 4x the default distance: the Earth shrinks to ~1/5 of the view
 // Zoom stops where the best texture would be magnified more than 4x on screen
 // (texture pixels per device pixel at the center of the view). Past ~1.7x (0.6) the
 // stills start to soften, but deeper zoom is worth it for exploring; at 4x it's blurry.
@@ -66,10 +67,9 @@ export class Globe {
     this.pivot.add(this.sphere);
     this.scene.add(this.pivot);
     // Stars, Sun, Moon and planets for the shown date; they turn with the Earth.
-    this.sky = new Sky({
-      parent: this.sphere, scene: this.scene, camera: this.camera, container,
-      pixelRatio: this.renderer.getPixelRatio(),
-    });
+    // Drawn first in its own pass (see update), so it sits at infinity behind the Earth.
+    this.sky = new Sky({ follow: this.sphere, mainCamera: this.camera, container });
+    this.renderer.autoClear = false;
 
     this.raycaster = new THREE.Raycaster();
     this._bindPointer();
@@ -79,7 +79,13 @@ export class Globe {
     this._apply();
   }
 
-  // 1 when zoomed out; grows as the camera nears the surface (surface distance ratio).
+  // Farthest the camera may go (zooming out past the default view, to see more sky).
+  get maxDistance() {
+    return this.far * OUT_FACTOR;
+  }
+
+  // 1 at the default view; grows as the camera nears the surface (surface distance ratio),
+  // below 1 when zoomed out past it.
   get zoomFactor() {
     return (this.far - 1) / (this.distance - 1);
   }
@@ -354,7 +360,7 @@ vec4 sampleSmooth(sampler2D tex, vec2 uv) {
   // factor > 1 zooms in, < 1 zooms out (multiplies the surface distance).
   zoomBy(factor) {
     const surface = (this.targetDistance - 1) / factor;
-    this.targetDistance = Math.max(this.minDistance, Math.min(this.far, 1 + surface));
+    this.targetDistance = Math.max(this.minDistance, Math.min(this.maxDistance, 1 + surface));
     this.idleFor = 0;
   }
 
@@ -379,7 +385,10 @@ vec4 sampleSmooth(sampler2D tex, vec2 uv) {
       this.onZoom?.(this.zoomFactor);
     }
     this._apply();
-    this.sky.update(this.container.clientWidth, this.container.clientHeight);
+    this.sky.update(this.container.clientWidth, this.container.clientHeight, this.renderer.domElement.height);
+    this.renderer.clear();
+    this.renderer.render(this.sky.scene, this.sky.camera);
+    this.renderer.clearDepth();
     this.renderer.render(this.scene, this.camera);
   }
 
@@ -425,9 +434,10 @@ vec4 sampleSmooth(sampler2D tex, vec2 uv) {
     // Fit the whole globe across the narrower side (portrait phones), with ~10% margin.
     const halfW = Math.min(1, this.camera.aspect) * Math.tan((this.camera.fov / 2) * DEG) * 0.9;
     const fitDistance = 1 / Math.sin(Math.atan(halfW));
-    const wasZoomedOut = this.targetDistance >= this.far - 1e-3;
+    const wasDefault = Math.abs(this.targetDistance - this.far) < 1e-3;
     this.far = Math.max(FAR, fitDistance);
-    if (wasZoomedOut || this.targetDistance > this.far) this.targetDistance = this.far;
+    if (wasDefault) this.targetDistance = this.far;
+    this.targetDistance = Math.min(this.targetDistance, this.maxDistance);
     this._updateZoomLimit(); // a bigger window needs more texels for the same zoom
     this._updateEventScale();
   }
@@ -439,8 +449,9 @@ vec4 sampleSmooth(sampler2D tex, vec2 uv) {
     let last = null;
     let pinchDist = 0;
 
-    // Radians per pixel: the surface should track the finger at any zoom.
-    const radPerPx = () => (2 * (this.distance - 1) * Math.tan(17.5 * DEG)) / this.container.clientHeight;
+    // Radians per pixel: the surface should track the finger at any zoom (zoomed out past
+    // the default view, keep the default rate so a small Earth doesn't spin wildly).
+    const radPerPx = () => (2 * (Math.min(this.distance, this.far) - 1) * Math.tan(17.5 * DEG)) / this.container.clientHeight;
 
     el.addEventListener('pointerdown', (e) => {
       pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
@@ -520,7 +531,7 @@ vec4 sampleSmooth(sampler2D tex, vec2 uv) {
           this.keysHeld.add(e.key);
           this.spinVel = 0; // cancel any drag momentum
           // Fresh press: start partway to full speed so a quick tap still moves.
-          const z = Math.sqrt(this.zoomFactor);
+          const z = Math.sqrt(Math.max(1, this.zoomFactor));
           if (e.key === 'ArrowLeft') this.keySpinVel = Math.max(this.keySpinVel, (KEY_TAP_KICK * KEY_SPIN_MAX) / z);
           if (e.key === 'ArrowRight') this.keySpinVel = Math.min(this.keySpinVel, (-KEY_TAP_KICK * KEY_SPIN_MAX) / z);
           if (e.key === 'ArrowUp') this.keyTiltVel = Math.max(this.keyTiltVel, (KEY_TAP_KICK * KEY_TILT_MAX) / z);
@@ -544,7 +555,7 @@ vec4 sampleSmooth(sampler2D tex, vec2 uv) {
   // Ease keyboard velocity toward its target: linear ramps (constant acceleration) feel
   // smoother than jumps, and coasting on release avoids a hard stop.
   _stepKeys(dt) {
-    const z = Math.sqrt(this.zoomFactor);
+    const z = Math.sqrt(Math.max(1, this.zoomFactor));
     const held = (k) => (this.keysHeld.has(k) ? 1 : 0);
     const ramp = (vel, dir, max) => {
       const target = dir * max;
