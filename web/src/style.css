@@ -321,6 +321,7 @@ input[type='range']::-moz-range-thumb { width: 10px; height: 10px; border-radius
   .readout { top: 112px; left: var(--gap); right: auto; width: auto; min-width: 170px; text-align: left; }
   .readout-head { justify-content: flex-start; }
   .mix-row { justify-content: flex-start; }
+  .mix-name { width: 72px; } /* left-aligned here: equal label widths keep the bars lined up */
   .mix-track { width: 110px; }
   .readout-value { font-size: 30px; margin-top: 4px; }
   .segmented { gap: 18px; }

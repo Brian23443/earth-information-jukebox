@@ -580,6 +580,7 @@ async function selectDataset(ds, { startAt = 0 } = {}) {
   updateLegend(ds);
   buildMix(ds);
   steady.key = steady.pendingKey = null; // a new dataset's first reading shows at once
+  Object.assign(activity, { value: 0, level: 0, at: 0 });
   const dates = loaded.frames?.dates;
   $('time-start').textContent = dates ? formatDay(dates[0]) : '';
   $('time-end').textContent = dates ? formatDay(dates[1]) : '';
@@ -850,7 +851,7 @@ function tick(now) {
     if (featureClock >= 0.1) { // 10 Hz is plenty after smoothing
       const features = extractor.extract(globe, frame);
       features.classes = extractor.extractClasses(globe, frame); // aerosols only (else null)
-      updateMix(features.classes);
+      updateMix(features);
       const pr = current.ds.padRange;
       if (pr) {
         const meanValue = current.summary.meta.vmin + features.mean01 * current.summary.range;
@@ -984,25 +985,39 @@ function describe(p) {
   return `${current.ds.title}, ${displayDate()}. ${formatPlace(p)}: ${readingAt(p).text}.`;
 }
 
-// Aerosols: four bars, one per type, sized by how much of it is in view (~1 = a typical
-// amount fills half the bar). The same levels set each type's volume (sound.js), so the
-// bars move with what you hear. Widths ease via CSS.
+// Readout bars. Aerosols: one per type, sized by how much of it is in view (~1 = a typical
+// amount fills half the bar). Lightning: activity here (the readout's averaged point) and
+// in view (the drums' level). The same levels drive the sounds, so the bars move with what
+// you hear. Widths ease via CSS.
+function mixRows(ds) {
+  if (ds.typeShort) return ds.typeShort.map((name, k) => [name, ds.typeColors[k]]);
+  if (ds.id === 'lightning') return [['Here', '#fff34a'], ['In view', '#fff34a']];
+  return null;
+}
 function buildMix(ds) {
   const mix = $('readout-mix');
-  mix.hidden = !ds.typeShort;
-  if (!ds.typeShort) { mix.innerHTML = ''; return; }
-  mix.innerHTML = ds.typeShort.map((name, k) =>
-    `<div class="mix-row"><span class="mix-name">${name}</span><span class="mix-track"><span class="mix-fill" style="background:${ds.typeColors[k]}"></span></span></div>`).join('');
+  const rows = mixRows(ds);
+  mix.hidden = !rows;
+  mix.innerHTML = rows
+    ? rows.map(([name, color]) =>
+      `<div class="mix-row"><span class="mix-name">${name}</span><span class="mix-track"><span class="mix-fill" style="background:${color}"></span></span></div>`).join('')
+    : '';
 }
-function updateMix(classes) {
-  if (!classes || $('readout-mix').hidden) return;
+function updateMix(features) {
+  if ($('readout-mix').hidden) return;
+  let levels = null;
+  if (features.classes) levels = features.classes.map((c) => c.level / 2);
+  else if (current?.events && features.hits) {
+    levels = [activity.value / ACTIVITY_LEVELS[3].up, (features.hits.norm ?? 0) / 2];
+  }
+  if (!levels) return;
   const fills = $('readout-mix').querySelectorAll('.mix-fill');
-  classes.forEach((c, k) => {
-    if (fills[k]) fills[k].style.width = `${Math.round(Math.min(1, Math.max(0, c.level) / 2) * 100)}%`;
+  levels.forEach((l, k) => {
+    if (fills[k]) fills[k].style.width = `${Math.round(Math.min(1, Math.max(0, l)) * 100)}%`;
   });
 }
 
-// Category readouts (aerosols): the big word (the type) changes only once a new type has
+// Category readouts (aerosols, lightning): the big word (the type) changes only once a new type has
 // held for a moment, and fades across; at plume edges the strongest type flickers between
 // neighbours and used to flip several times a second. The small line (amount, place)
 // updates directly. Numbers (temperatures) update directly too.
@@ -1026,6 +1041,41 @@ function showReadout(key, value, sub) {
   }, 140);
 }
 
+// Lightning: the label describes activity around the point (the cell and its 8
+// neighbours, ~4° across) averaged over about a second. Single frames flicker: a cell is
+// lit one frame and dark the next, and the label used to flip ~5 times a second. Levels
+// also need a clear margin to change (hysteresis: up at `up`, back down only below `down`).
+const ACTIVITY_LEVELS = [
+  { name: 'Quiet', up: 0, down: 0 },
+  { name: 'Scattered flashes', up: 0.0004, down: 0.00015 },
+  { name: 'Storms', up: 0.0016, down: 0.001 },
+  { name: 'Heavy storms', up: 0.0045, down: 0.003 },
+];
+const activity = { value: 0, level: 0, at: 0 };
+function updateActivity(p) {
+  const now = performance.now();
+  const dt = Math.min(0.5, (now - (activity.at || now)) / 1000);
+  activity.at = now;
+  const { vmin } = current.summary.meta;
+  const range = current.summary.range;
+  const step = 1.4, cosLat = Math.max(0.2, Math.cos(p.lat * Math.PI / 180));
+  let sum = 0, n = 0;
+  for (let dy = -1; dy <= 1; dy++) {
+    for (let dx = -1; dx <= 1; dx++) {
+      const lon = ((p.lon + (dx * step) / cosLat + 540) % 360) - 180;
+      const r = readingAt({ lat: Math.max(-89, Math.min(89, p.lat + dy * step)), lon });
+      if (r.value01 != null) { sum += vmin + r.value01 * range; n++; }
+    }
+  }
+  const v = n ? sum / n : 0;
+  activity.value += (v - activity.value) * (1 - Math.exp(-dt / 0.9));
+  let L = activity.level;
+  while (L < ACTIVITY_LEVELS.length - 1 && activity.value > ACTIVITY_LEVELS[L + 1].up) L++;
+  while (L > 0 && activity.value < ACTIVITY_LEVELS[L].down) L--;
+  activity.level = L;
+}
+if (import.meta.env.DEV) window.__activity = activity;
+
 function updateReadout() {
   if (!current) return;
   const p = hover ?? globe.center();
@@ -1033,7 +1083,10 @@ function updateReadout() {
   $('readout-date').textContent = displayDate() || '—';
   const r = readingAt(p);
   const place = formatPlace(p);
-  if (current.summary.classes) {
+  if (current.events) {
+    updateActivity(p);
+    showReadout(`activity ${activity.level}`, ACTIVITY_LEVELS[activity.level].name, place);
+  } else if (current.summary.classes) {
     const amount = r.amount ? r.amount[0].toUpperCase() + r.amount.slice(1) : null;
     showReadout(r.short ? `type ${r.type}` : r.text, r.short ?? r.text, amount ? `${amount} · ${place}` : place);
   } else {
