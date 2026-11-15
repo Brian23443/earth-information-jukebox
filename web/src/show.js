@@ -5,6 +5,7 @@
 //   { seek: 0.42 }                jump to this point of the timeline (0-1)
 //   { play: true, speed: 1 }      playback
 //   { focus: ['pad'] }            play only these sound layers (null = all; see sound.js)
+//   { probe: true }               the temperature tone: pitch = value in front of the viewer
 //   { fly: { lat, lon, zoom, seconds }, wait: false }   move the camera (waits unless wait: false)
 //   { say: 'ocean-1', text: '…' } a narration line (waits until it has been spoken)
 //   { pause: 1.5 }                wait this many seconds (a moment to just listen)
@@ -20,7 +21,7 @@ const VOICE_DIR = 'show/voice';
 
 export class Show {
   constructor(ctx) {
-    this.ctx = ctx; // { globe, sound, selectDataset(id), seek(f), setPlaying(b), setSpeed(x), caption(text|null), onEnd() }
+    this.ctx = ctx; // { globe, sound, selectDataset(id), seek(f), setPlaying(b), setSpeed(x), probe(b), caption(text|null), onEnd() }
     this.running = false;
     this.cancels = new Set();
     this.recordings = null;
@@ -54,9 +55,9 @@ export class Show {
     this.audio?.pause();
     this.audio = null;
     const { globe, sound } = this.ctx;
-    globe.held = false;
+    globe.releaseHold();
     globe.idleFor = 0;
-    globe.cancelFlight();
+    this.ctx.probe(false);
     sound.focus(null);
     sound.duck(false);
     sound.setBed(false);
@@ -71,6 +72,7 @@ export class Show {
     if (s.speed != null) ctx.setSpeed(s.speed);
     if (s.play != null) ctx.setPlaying(s.play);
     if (s.focus !== undefined) ctx.sound.focus(s.focus);
+    if (s.probe != null) ctx.probe(s.probe);
     if (s.fly) {
       const arrived = ctx.globe.flyTo(s.fly);
       // A whoosh as big as the move, panned the way the planet turns.

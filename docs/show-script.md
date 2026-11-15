@@ -1,6 +1,6 @@
 # Guided show: narration script
 
-17 lines, 319 words (about 2 minutes of speech).
+18 lines, 340 words (about 2.2 minutes of speech).
 
 Record each line and save it as `web/public/show/voice/<file>` (MP3). Lines without a
 recording are read by the browser's built-in voice. Generated from `web/src/show-script.js`;
@@ -11,8 +11,9 @@ rerun `node scripts/export-show-script.mjs` after editing it.
 | `intro-1.mp3` | Welcome to the Earth Information Jukebox. Everything you are about to hear is real NASA data about our planet, turned into sound. |
 | `intro-2.mp3` | We will learn the sounds one at a time. Then the planet is yours to explore, with or without sight. |
 | `ocean-1.mp3` | First, the ocean. This slow chord is the average temperature of the sea surface facing you. Warmer water makes it higher and brighter. |
-| `ocean-2.mp3` | Down here, toward the cold Southern Ocean in its winter, the chord sinks and darkens. |
-| `ocean-3.mp3` | Over the warm tropical Pacific, it rises and opens up. |
+| `sweep-1.mp3` | Listen to this single tone. Its pitch is the temperature of the sea in front of you: the warmer the water, the higher the note. |
+| `sweep-2.mp3` | Let's start at the North Pole, and work our way down to the equator. |
+| `sweep-3.mp3` | And now, on to the South Pole. |
 | `ocean-4.mp3` | Now the melody. Four notes play from left to right, one for each slice of the globe in front of you. A higher note means warmer water in that slice. |
 | `storm-1.mp3` | Next, lightning, seen by a camera on the International Space Station. Every drum hit is a burst of new lightning on the side of Earth facing you. |
 | `storm-2.mp3` | The busier the storms, the busier the drums. Storms farther north sound higher, and storms on your left play in your left ear. |

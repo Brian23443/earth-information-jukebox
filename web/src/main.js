@@ -148,6 +148,10 @@ const show = new Show({
     $('speed').value = String(x);
     $('speed').dispatchEvent(new Event('change'));
   },
+  probe(on) {
+    probeOn = on;
+    sound.probe(on);
+  },
   caption(text) {
     if (text) $('show-caption').textContent = text;
   },
@@ -159,7 +163,20 @@ const show = new Show({
   },
 });
 
-if (import.meta.env.DEV) window.__show = show;
+if (import.meta.env.DEV) { window.__show = show; window.__probeAt = (lat, lon) => probeReading({ lat, lon }); }
+
+// The temperature tone follows the value at the centre of the view, averaged across a band
+// 30° of longitude wide so a strip of land doesn't silence it.
+let probeOn = false;
+function probeReading(c = globe.center()) {
+  if (!c || !current) return null;
+  let sum = 0, n = 0;
+  for (let dl = -15; dl <= 15; dl += 5) {
+    const r = readingAt({ lat: c.lat, lon: ((c.lon + dl + 540) % 360) - 180, x: 0 });
+    if (r.value01 != null) { sum += r.value01; n++; }
+  }
+  return n ? sum / n : null;
+}
 
 function startShow() {
   if (show.running) return;
@@ -777,6 +794,7 @@ function tick(now) {
         features.padMean01 = Math.min(1, Math.max(0, (meanValue - pr[0]) / (pr[1] - pr[0])));
       }
       sound.update(features, featureClock);
+      if (probeOn) sound.probeValue(probeReading());
       // Keyboard users: the center of the view plays for a few seconds after they move the globe.
       if (globe.keyMoving) keyboardMovedAt = now; // still turning (held key or coasting)
       if (!hover && document.activeElement === $('globe') && now - keyboardMovedAt < 3000) {

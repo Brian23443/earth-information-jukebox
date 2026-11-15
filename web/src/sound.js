@@ -13,8 +13,8 @@ const THUNDER_AT = 1.6;   // above this: occasional thunder accent
 const MASTER_DB = -8;
 const DUCK_DB = -4;       // data sounds drop this much while the narrator speaks (kept light: the data is the show)
 const FOCUS_GAIN = 1.5;   // a layer playing on its own in the show is lifted this much
-// Layer names for focus(): pad (ocean chord / lightning storm rumble), melody, drums, and
-// the aerosol voices by type.
+// Layer names for focus(): pad (ocean chord / lightning storm rumble), melody, drums, probe
+// (the guided show's temperature tone), and the aerosol voices by type.
 export const AEROSOL_TYPES = ['smoke', 'dust', 'salt', 'sulfate'];
 
 // Scale degree -> note name. Degree 0 = C2.
@@ -43,8 +43,9 @@ export class SoundEngine {
     this.room = new Tone.Reverb({ decay: 3.2, preDelay: 0.02, wet: 0.24 }).connect(this.limiter);
     // One gain per layer, so the guided show can play a single sound on its own (focus).
     this.bus = {};
-    for (const name of ['pad', 'melody', 'drums']) this.bus[name] = new Tone.Gain(1).connect(this.room);
+    for (const name of ['pad', 'melody', 'drums', 'probe']) this.bus[name] = new Tone.Gain(1).connect(this.room);
     this._buildEffects();
+    this._buildProbe();
     this.aeroFocus = [1, 1, 1, 1];
 
     // Layer 1: pad. Warmer = brighter filter + higher chord.
@@ -217,6 +218,45 @@ export class SoundEngine {
     const level = (name) => (!layers ? 1 : layers.includes(name) ? FOCUS_GAIN : 0);
     for (const [name, g] of Object.entries(this.bus)) g.gain.rampTo(level(name), 0.6);
     this.aeroFocus = AEROSOL_TYPES.map(level);
+  }
+
+  // ---------- Temperature tone (guided show) ----------
+  // One soft, clear note whose pitch is the value in front of the viewer, gliding between
+  // notes of the scale: sweep the camera from pole to equator and you hear it climb.
+  _buildProbe() {
+    this.probeFilter = new Tone.Filter(2400, 'lowpass').connect(this.bus.probe);
+    this.probeVibrato = new Tone.Vibrato(4.5, 0.06).connect(this.probeFilter);
+    this.probeSynth = new Tone.Synth({
+      oscillator: { type: 'fatsine', count: 2, spread: 8 },
+      portamento: 0.22,
+      envelope: { attack: 0.6, decay: 0.2, sustain: 1, release: 1.4 },
+      volume: -9,
+    }).connect(this.probeVibrato);
+    this.probeOn = false;
+    this.probeDegree = null;
+  }
+
+  // on: start or stop the tone.
+  probe(on) {
+    if (!this.probeSynth) this._buildProbe();
+    if (on === this.probeOn) return;
+    this.probeOn = on;
+    if (!on) {
+      this.probeSynth.triggerRelease();
+      this.probeDegree = null;
+    }
+  }
+
+  // value01: 0-1 (the dataset's range) or null where there's no data (the tone rests).
+  probeValue(value01) {
+    if (!this.probeOn) return;
+    if (value01 == null) return; // keep the last note across a strip of land
+    const degree = Math.round(Math.max(0, Math.min(1, value01)) * 14); // three octaves of the scale
+    if (degree === this.probeDegree) return;
+    const note = degreeToNote(degree, 3);
+    if (this.probeDegree === null) this.probeSynth.triggerAttack(note);
+    else this.probeSynth.setNote(note); // glides (portamento)
+    this.probeDegree = degree;
   }
 
   // ---------- Effects for the guided show and dataset switches ----------

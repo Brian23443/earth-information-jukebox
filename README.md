@@ -1,5 +1,7 @@
 # Earth Information Jukebox
 
+By Team Waveform, for NASA Space Apps 2026.
+
 NASA Space Apps 2026: a spinnable 3D globe that plays NASA Earth data as music. Built for blind and low-vision users first. The plan is in [docs/](docs/).
 
 ```
@@ -205,6 +207,7 @@ A narrated tour (about 2 minutes 20 seconds) that teaches the sounds one at a ti
 
 - **Script:** `web/src/show-script.js`. Every claim was checked against the data at that place and date (noted in the file): e.g. August 2007, the South Atlantic toward the Southern Ocean averages 17.9 °C against 24.2 °C for the tropical Pacific, so the chord really drops. Comparisons are paused on their checked date (playing on, the ocean reaches southern summer within a minute).
 - **Voice:** each line `<id>` plays `web/public/show/voice/<id>.mp3` when it exists, otherwise the browser's built-in voice reads it (a stand-in). The recordings are AI-generated; `python pipeline/voiceover.py` takes the exported files from `data/raw/voiceOver/` (named after the start of each line), matches each to its line, speeds it up 12% (pitch kept), trims silence at both ends and evens out loudness (-16 LUFS): 199 s of speech becomes 170 s. `node scripts/export-show-script.mjs` writes `docs/show-script.md`, the list of lines and file names to record. Builds list the recordings in `show/voice/index.json`, so the live site never probes for missing ones.
+- **Temperature tone:** in the ocean scene, a single note whose pitch is the sea temperature at the centre of the view (averaged 15° of longitude either side, so a strip of land doesn't silence it), gliding along the scale. The camera sweeps the Pacific at 160° W from 75° N to the equator and on to 70° S (the show may tilt up to 75°; exploring stays within 30°, and the view eases back after the show). Checked in late July 2007: 0.1 °C at 75° N (lowest note), 27.5 °C at the equator (12 steps up, almost two and a half octaves), 0.1 °C at 70° S.
 - **Engine:** `web/src/show.js`; camera moves via `globe.flyTo`, single-layer playback via `sound.focus`, narration ducking via `sound.duck`.
 
 ### Switching datasets

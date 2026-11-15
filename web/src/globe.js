@@ -18,6 +18,7 @@ const OUT_FACTOR = 4;      // zoom out to 4x the default distance: the Earth shr
 const MIN_TEXELS_PER_PX = 0.25;
 const MAX_SPIN_VEL = 4;    // rad/s cap on fling speed
 const SHOW_DRIFT = 1.6 * DEG; // rad/s, guided show between camera moves
+const SHOW_MAX_TILT = 75 * DEG; // the show can look down on the poles
 // Arrow keys: held keys accelerate to a steady speed, release coasts to a stop.
 // (Speeds shrink with zoom so keyboard users can make fine moves when zoomed in.)
 const KEY_SPIN_MAX = 80 * DEG;    // rad/s at full speed, zoomed out
@@ -630,7 +631,9 @@ vec4 sampleSmooth(sampler2D tex, vec2 uv) {
     let spin = (90 - (lon + 180)) * DEG;
     const turn = 2 * Math.PI;
     spin += Math.round((this.spin - spin) / turn) * turn; // the short way round
-    const tilt = Math.max(-MAX_TILT, Math.min(MAX_TILT, lat * DEG));
+    // The show may look at the poles (the temperature sweep); exploring stays within ±30°.
+    const limit = this.held ? SHOW_MAX_TILT : MAX_TILT;
+    const tilt = Math.max(-limit, Math.min(limit, lat * DEG));
     const z = Math.max(0.2, zoom);
     const distance = Math.max(this.minDistance, Math.min(this.maxDistance, 1 + (this.far - 1) / z));
     this.spinVel = 0;
@@ -647,6 +650,21 @@ vec4 sampleSmooth(sampler2D tex, vec2 uv) {
   cancelFlight() {
     this.flight?.resolve();
     this.flight = null;
+  }
+
+  // End of the show: hand back control. If it left the view tilted past what exploring
+  // allows (a pole), ease back inside the limit instead of snapping at the first key press.
+  releaseHold() {
+    this.held = false;
+    this.cancelFlight();
+    if (Math.abs(this.tilt) > MAX_TILT + 1e-3) {
+      const tilt = Math.sign(this.tilt) * MAX_TILT;
+      this.flight = {
+        t: 0, seconds: 1.2, resolve: () => {},
+        from: { spin: this.spin, tilt: this.tilt, distance: this.targetDistance },
+        to: { spin: this.spin, tilt, distance: this.targetDistance },
+      };
+    }
   }
 
   _stepFlight(dt) {

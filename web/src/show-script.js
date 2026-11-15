@@ -15,18 +15,21 @@ export const SHOW_SCRIPT = [
   { say: 'intro-2', text: 'We will learn the sounds one at a time. Then the planet is yours to explore, with or without sight.' },
 
   // ---------- Ocean temperature ----------
-  // Checked (Aug 2007): the South Atlantic toward the Southern Ocean averages 17.9 °C (chord
-  // root 2, filter 1,125 Hz); the tropical Pacific 24.2 °C (root 5, 2,419 Hz). Half speed
-  // from mid-July puts the Southern Ocean line around Sep 1 (measured: from late July it
-  // landed on Sep 12 at 17.9 °C), still its winter.
   { seek: 0.33, speed: 0.5, say: 'ocean-1', text: 'First, the ocean. This slow chord is the average temperature of the sea surface facing you. Warmer water makes it higher and brighter.' },
   { pause: 1.5 },
-  { fly: { lat: -30, lon: 0, zoom: 2, seconds: 3 } },
-  { say: 'ocean-2', text: 'Down here, toward the cold Southern Ocean in its winter, the chord sinks and darkens.' },
+
+  // The temperature tone, pole to pole along the Pacific (160° W): its pitch is the sea
+  // temperature at the centre of the view (averaged 15° either side), so it climbs from
+  // near freezing at the North Pole to the warm equator and falls again toward Antarctica.
+  { focus: ['probe'], probe: true, fly: { lat: 75, lon: -160, zoom: 1.5, seconds: 4 } },
+  { say: 'sweep-1', text: 'Listen to this single tone. Its pitch is the temperature of the sea in front of you: the warmer the water, the higher the note.' },
+  { say: 'sweep-2', text: "Let's start at the North Pole, and work our way down to the equator." },
+  { fly: { lat: 0, lon: -160, zoom: 1.5, seconds: 9 } },
   { pause: 1.5 },
-  { fly: { lat: 0, lon: -150, zoom: 2, seconds: 4 } },
-  { say: 'ocean-3', text: 'Over the warm tropical Pacific, it rises and opens up.' },
+  { say: 'sweep-3', text: 'And now, on to the South Pole.' },
+  { fly: { lat: -70, lon: -160, zoom: 1.5, seconds: 9 } },
   { pause: 2 },
+  { probe: false },
   { focus: ['melody'], speed: 1, fly: { lat: 10, lon: -150, zoom: 1, seconds: 2 }, wait: false },
   { say: 'ocean-4', text: 'Now the melody. Four notes play from left to right, one for each slice of the globe in front of you. A higher note means warmer water in that slice.' },
   { pause: 2.5 },
