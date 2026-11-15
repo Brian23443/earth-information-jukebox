@@ -89,12 +89,12 @@ export class Globe {
     this.scene.add(this.pivot);
     this.cover = null;
     this.swapStyle = 'bloom';
+    this.flight = null;
+    this.held = false; // true during the guided show: no auto-spin
     this.eventSets = new Set(); // lightning dot buffers, kept between switches
     this.eventPoints = null;
     this.atmosphere = this._makeAtmosphere();
     this.scene.add(this.atmosphere); // doesn't turn: the glow follows the light, not the land
-    this.halo = this._makeHalo();
-    this.scene.add(this.halo);
     // Stars, Sun, Moon and planets for the shown date; they turn with the Earth.
     // Drawn first in its own pass (see update), so it sits at infinity behind the Earth.
     this.sky = new Sky({ follow: this.sphere, mainCamera: this.camera, container });
@@ -585,6 +585,7 @@ vec4 sampleSmooth(sampler2D tex, vec2 uv) {
     this.idleFor += dt;
     this._stepKeys(dt);
     this._stepCover(dt);
+    this._stepFlight(dt);
     this._stepEvents(dt);
     this._stepSwap(dt);
     if (!this.dragging) {
@@ -592,7 +593,7 @@ vec4 sampleSmooth(sampler2D tex, vec2 uv) {
       this.spinVel *= Math.pow(0.08, dt); // momentum decays smoothly
       if (Math.abs(this.spinVel) < 0.005) this.spinVel = 0;
       // Auto-spin only when idle and zoomed out, and ease it in rather than jumping.
-      if (this.idleFor > 4 && this.zoomFactor < 1.2) {
+      if (this.idleFor > 4 && this.zoomFactor < 1.2 && !this.held) {
         const ease = Math.min(1, (this.idleFor - 4) / 2);
         this.spin += this.autoSpin * ease * dt;
       }
@@ -606,12 +607,53 @@ vec4 sampleSmooth(sampler2D tex, vec2 uv) {
       this.onZoom?.(this.zoomFactor);
     }
     this._apply();
-    this.halo.quaternion.copy(this.camera.quaternion);
     this.sky.update(this.container.clientWidth, this.container.clientHeight, this.renderer.domElement.height);
     this.renderer.clear();
     this.renderer.render(this.sky.scene, this.sky.camera);
     this.renderer.clearDepth();
     this.renderer.render(this.scene, this.camera);
+  }
+
+  // ---------- Guided show ----------
+  // Turn so (lat, lon) faces the viewer, at a zoom factor (1 = default view), over `seconds`.
+  // Latitude is limited by the tilt clamp (±30°). Resolves on arrival.
+  flyTo({ lat = 15, lon = 0, zoom = 1, seconds = 2.5 } = {}) {
+    // spin = 90° - (lon + 180°) puts lon in front (see latLonToLocal); tilt = lat.
+    let spin = (90 - (lon + 180)) * DEG;
+    const turn = 2 * Math.PI;
+    spin += Math.round((this.spin - spin) / turn) * turn; // the short way round
+    const tilt = Math.max(-MAX_TILT, Math.min(MAX_TILT, lat * DEG));
+    const z = Math.max(0.2, zoom);
+    const distance = Math.max(this.minDistance, Math.min(this.maxDistance, 1 + (this.far - 1) / z));
+    this.spinVel = 0;
+    this.flight?.resolve();
+    return new Promise((resolve) => {
+      this.flight = {
+        t: 0, seconds: Math.max(0.01, seconds), resolve,
+        from: { spin: this.spin, tilt: this.tilt, distance: this.targetDistance },
+        to: { spin, tilt, distance },
+      };
+    });
+  }
+
+  cancelFlight() {
+    this.flight?.resolve();
+    this.flight = null;
+  }
+
+  _stepFlight(dt) {
+    const f = this.flight;
+    if (!f) return;
+    f.t = Math.min(1, f.t + dt / f.seconds);
+    const e = f.t < 0.5 ? 4 * f.t ** 3 : 1 - Math.pow(-2 * f.t + 2, 3) / 2;
+    this.spin = f.from.spin + (f.to.spin - f.from.spin) * e;
+    this.tilt = f.from.tilt + (f.to.tilt - f.from.tilt) * e;
+    this.targetDistance = f.from.distance + (f.to.distance - f.from.distance) * e;
+    this.idleFor = 0;
+    if (f.t >= 1) {
+      this.flight = null;
+      f.resolve();
+    }
   }
 
   // ---------- Switching datasets ----------
@@ -720,37 +762,6 @@ vec4 sampleSmooth(sampler2D tex, vec2 uv) {
     });
     const m = new THREE.Mesh(new THREE.SphereGeometry(1.045, 96, 48), mat);
     m.renderOrder = 2;
-    return m;
-  }
-
-  // A soft, wide glow behind the planet: a camera-facing disc at the globe's centre, so the
-  // globe hides its middle and only the light spilling past the edge shows. Brightest just
-  // outside the edge, fading out over about half a globe radius.
-  _makeHalo() {
-    const mat = new THREE.ShaderMaterial({
-      uniforms: { uStrength: { value: 0.32 } },
-      transparent: true,
-      depthWrite: false,
-      blending: THREE.CustomBlending,
-      blendSrc: THREE.OneFactor,
-      blendDst: THREE.OneFactor,
-      blendSrcAlpha: THREE.OneFactor,
-      blendDstAlpha: THREE.OneFactor,
-      vertexShader: /* glsl */ `
-        varying vec2 vP;
-        void main() { vP = position.xy; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
-      fragmentShader: /* glsl */ `
-        uniform float uStrength; varying vec2 vP;
-        void main() {
-          float r = length(vP);                       // globe radii from the centre
-          float g = exp(-pow(max(r - 0.98, 0.0) / 0.36, 1.4)) * smoothstep(2.05, 1.25, r);
-          vec3 c = mix(vec3(0.25, 0.45, 1.0), vec3(0.55, 0.4, 1.0), smoothstep(1.0, 1.8, r)) * g * uStrength;
-          gl_FragColor = vec4(c, max(c.r, max(c.g, c.b)));
-        }`,
-    });
-    const m = new THREE.Mesh(new THREE.PlaneGeometry(4.2, 4.2), mat);
-    m.renderOrder = -1; // before the globe; the globe's depth hides the middle
-    m.frustumCulled = false;
     return m;
   }
 

@@ -110,6 +110,13 @@ button, select, input { font: inherit; color: inherit; }
 .btn-outline svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.6; }
 .btn-outline:hover, .btn-outline:focus-visible { background: #fff; color: #05070c; }
 .btn-outline:disabled { cursor: default; }
+.cover-actions { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; }
+.btn-text {
+  padding: 14px 6px; border: 0; background: transparent; color: rgba(236, 241, 255, 0.82); cursor: pointer;
+  font-size: 14px; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase;
+  text-decoration: underline; text-decoration-color: rgba(236, 241, 255, 0.35); text-underline-offset: 6px;
+}
+.btn-text:hover, .btn-text:focus-visible { color: #fff; text-decoration-color: #fff; }
 .hint { margin: 24px 0 0; font-size: 13px; color: rgba(236, 241, 255, 0.5); }
 @media (max-width: 760px) and (orientation: portrait) {
   /* Planet sits low (globe.js); words at the top. */
@@ -270,6 +277,8 @@ input[type='range']::-moz-range-thumb { width: 14px; height: 14px; border-radius
   .topbar { flex-direction: column; align-items: stretch; gap: 10px; }
   .brand-sub { display: none; }
   .segmented { align-self: stretch; }
+  .topbar-right { align-self: stretch; }
+  .topbar-right .segmented { flex: 1; }
   /* Readout under the dataset switcher; tools bottom-right; legend above the player. */
   .readout { top: 116px; left: var(--gap); right: auto; width: auto; min-width: 170px; padding: 10px 14px; }
   .readout-value { font-size: 24px; margin-top: 6px; }
@@ -287,4 +296,27 @@ input[type='range']::-moz-range-thumb { width: 14px; height: 14px; border-radius
 
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; animation: none !important; }
+}
+
+/* ---------- Guided show ---------- */
+.topbar-right { display: flex; align-items: center; gap: 10px; }
+.show-btn {
+  display: inline-flex; align-items: center; gap: 8px; padding: 9px 14px; border: 0; border-radius: 999px;
+  color: var(--text); cursor: pointer; font-size: 13px; font-weight: 500;
+}
+.show-btn svg { width: 14px; height: 14px; fill: currentColor; }
+.show-btn:hover { background: rgba(255, 255, 255, 0.1); }
+.show-bar {
+  position: fixed; left: 50%; transform: translateX(-50%);
+  bottom: calc(110px + var(--safe-b)); width: min(760px, calc(100% - 32px));
+  display: flex; align-items: center; gap: 16px; padding: 14px 16px 14px 22px; border-radius: 18px;
+  pointer-events: auto;
+}
+.show-caption { flex: 1; margin: 0; font-size: 18px; line-height: 1.45; color: var(--text); min-height: 1.45em; }
+.show-bar .btn-text { padding: 8px 4px; font-size: 12px; white-space: nowrap; }
+body.showing .readout { opacity: 0.85; }
+@media (max-width: 760px) {
+  .show-bar { bottom: calc(150px + var(--safe-b)); flex-direction: column; align-items: stretch; gap: 6px; }
+  .show-caption { font-size: 16px; }
+  .show-btn { padding: 8px 10px; }
 }

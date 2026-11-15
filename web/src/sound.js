@@ -10,6 +10,11 @@ const SMOOTH_TAU = 0.5; // seconds
 // busy level (features.js), so ~1 means "a normal busy moment".
 const HIT_MIN = 0.12;     // below this: silence
 const THUNDER_AT = 1.6;   // above this: occasional thunder accent
+const MASTER_DB = -8;
+const DUCK_DB = -9;       // data sounds drop this much while the narrator speaks
+// Layer names for focus(): pad (ocean chord / lightning storm rumble), melody, drums, and
+// the aerosol voices by type.
+export const AEROSOL_TYPES = ['smoke', 'dust', 'salt', 'sulfate'];
 
 // Scale degree -> note name. Degree 0 = C2.
 export function degreeToNote(deg, baseOctave = 2) {
@@ -28,11 +33,15 @@ class Smoothed {
 
 export class SoundEngine {
   constructor() {
-    this.master = new Tone.Volume(-8).toDestination();
+    this.master = new Tone.Volume(MASTER_DB).toDestination();
     this.limiter = new Tone.Limiter(-1).connect(this.master);
+    // One gain per layer, so the guided show can play a single sound on its own (focus).
+    this.bus = {};
+    for (const name of ['pad', 'melody', 'drums']) this.bus[name] = new Tone.Gain(1).connect(this.limiter);
+    this.aeroFocus = [1, 1, 1, 1];
 
     // Layer 1: pad. Warmer = brighter filter + higher chord.
-    this.padFilter = new Tone.Filter(600, 'lowpass').connect(this.limiter);
+    this.padFilter = new Tone.Filter(600, 'lowpass').connect(this.bus.pad);
     this.pad = new Tone.PolySynth(Tone.Synth, {
       oscillator: { type: 'fatsawtooth', count: 3, spread: 20 },
       envelope: { attack: 1.5, decay: 0.5, sustain: 0.8, release: 3 },
@@ -42,7 +51,7 @@ export class SoundEngine {
 
     // Layer 2: melody. Four notes panned left to right across the visible side.
     this.melody = [-0.75, -0.25, 0.25, 0.75].map((pan) => {
-      const panner = new Tone.Panner(pan).connect(this.limiter);
+      const panner = new Tone.Panner(pan).connect(this.bus.melody);
       const synth = new Tone.Synth({
         oscillator: { type: 'triangle' },
         envelope: { attack: 0.02, decay: 0.3, sustain: 0.2, release: 1.2 },
@@ -55,7 +64,7 @@ export class SoundEngine {
 
     // Layer 3: percussion (lightning). Quantized to 16th notes so it grooves instead of
     // firing on every data frame (15/s).
-    this.drumPan = new Tone.Panner(0).connect(this.limiter);
+    this.drumPan = new Tone.Panner(0).connect(this.bus.drums);
     this.drum = new Tone.MembraneSynth({
       pitchDecay: 0.03, octaves: 4,
       envelope: { attack: 0.001, decay: 0.35, sustain: 0, release: 0.2 },
@@ -189,6 +198,22 @@ export class SoundEngine {
     this.master.mute = muted;
   }
 
+  get muted() {
+    return this.master.mute;
+  }
+
+  // Play only these layers (names above); null brings everything back. Fades over ~0.6 s.
+  focus(layers = null) {
+    const on = (name) => !layers || layers.includes(name);
+    for (const [name, g] of Object.entries(this.bus)) g.gain.rampTo(on(name) ? 1 : 0, 0.6);
+    this.aeroFocus = AEROSOL_TYPES.map((t) => (on(t) ? 1 : 0));
+  }
+
+  // Quieter data while the narrator speaks.
+  duck(on) {
+    this.master.volume.rampTo(MASTER_DB + (on ? DUCK_DB : 0), on ? 0.25 : 0.8);
+  }
+
   // features: { mean01, bands: [{v01, level}], hits?: {strength, lat01, pan} }
   update(features, dt) {
     if (!features) return;
@@ -211,7 +236,7 @@ export class SoundEngine {
         const v = this.aero[k];
         const l = v.level.step(level, dt);
         // ~1 = typical amount -> gain 0.5; heavier plumes up to full, silent when absent.
-        v.gain.gain.rampTo(Math.min(1, Math.max(0, l * 0.5)) * Math.min(1.6, v.solo), 0.25);
+        v.gain.gain.rampTo(Math.min(1, Math.max(0, l * 0.5)) * Math.min(1.6, v.solo) * this.aeroFocus[k], 0.25);
         v.pan.pan.rampTo(pan, 0.4);
       });
       // Dust drone opens up a little as dust thickens.

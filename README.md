@@ -199,6 +199,14 @@ On frame 700, the redrawn types match NASA's frame: the Saharan dust plume, the 
 
 Hovering a plume plays that type alone for 1.5 seconds, with the others ducked to about 12%.
 
+### Guided show
+
+A narrated tour (about 2 minutes 20 seconds) that teaches the sounds one at a time, then hands over the planet: "Start the show" on the cover, or "Guided show" in the app. Each scene flies to a place, picks the dataset and date, and plays one sound layer alone while the narrator names it, then the full mix. Any steering (arrow keys, +/-, Esc, a press on the globe or controls) ends it on the spot, leaving the planet where it is. Captions show every line; the data sounds dip while the narrator speaks. Zoom-in detail stills are held off during the show so playback isn't paused.
+
+- **Script:** `web/src/show-script.js`. Every claim was checked against the data at that place and date (noted in the file): e.g. August 2007, the South Atlantic toward the Southern Ocean averages 17.9 °C against 24.2 °C for the tropical Pacific, so the chord really drops. Comparisons are paused on their checked date (playing on, the ocean reaches southern summer within a minute).
+- **Voice:** each line `<id>` plays `web/public/show/voice/<id>.mp3` when it exists, otherwise the browser's built-in voice reads it (a stand-in). `node scripts/export-show-script.mjs` writes `docs/show-script.md`, the list of lines and file names to record. Builds list the recordings in `show/voice/index.json`, so the live site never probes for missing ones.
+- **Engine:** `web/src/show.js`; camera moves via `globe.flyTo`, single-layer playback via `sound.focus`, narration ducking via `sound.duck`.
+
 ### Switching datasets
 
 Measured before: switching to Lightning blocked the page for ~600 ms (parsing 1.86M dots, building their GPU buffers, uploading the 8192 night map), every time. Now:

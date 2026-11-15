@@ -5,8 +5,11 @@ import { Globe } from './globe.js';
 import { SoundEngine } from './sound.js';
 import { FeatureExtractor } from './features.js';
 import { Announcer, speak, formatPlace } from './a11y.js';
+import { Show } from './show.js';
+import { SHOW_SCRIPT } from './show-script.js';
 
 const $ = (id) => document.getElementById(id);
+const DEV_START_MUTED = true; // temporary, for development: see the start button handler
 const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 const announcer = new Announcer($('live'));
 
@@ -95,13 +98,18 @@ if (import.meta.env.DEV) window.__globe = globe; // for side-by-side checks in t
 }
 requestAnimationFrame(tick);
 
-$('start-btn').addEventListener('click', async () => {
+// Both cover buttons start audio and the app; "Start the show" then runs the guided show.
+async function begin({ withShow }) {
   $('start-btn').disabled = true;
+  $('explore-btn').disabled = true;
   // Move first, so the click answers instantly; audio and data catch up during the glide.
   $('start').classList.add('leaving');
   const leaving = globe.leaveCover();
   sound = new SoundEngine();
   await sound.start();
+  // Development only (npm run dev): start muted. The mute button still unmutes.
+  // Production builds are unaffected. Set DEV_START_MUTED to false to hear it by default.
+  if (import.meta.env.DEV && DEV_START_MUTED) setMuted(true);
   $('app').classList.add('intro');
   $('app').hidden = false;
   globe.onZoom = onZoom;
@@ -113,8 +121,64 @@ $('start-btn').addEventListener('click', async () => {
   $('app').classList.remove('intro');
   $('globe').focus(); // keyboard users land on the globe, ready to spin
   setTimeout(preloadOtherDatasets, 400); // sooner = more first switches find everything ready
-});
+  if (withShow) startShow();
+}
+$('start-btn').addEventListener('click', () => begin({ withShow: true }));
+$('explore-btn').addEventListener('click', () => begin({ withShow: false }));
 $('start-btn').focus();
+
+// ---------- Guided show (show.js, script in show-script.js) ----------
+const show = new Show({
+  get globe() { return globe; },
+  get sound() { return sound; },
+  async selectDataset(id) {
+    if (current?.ds.id !== id) await selectDataset(DATASETS.find((d) => d.id === id));
+  },
+  seek(f) {
+    $('scrub').value = String(Math.round(f * 1000));
+    if (video?.duration) video.currentTime = f * video.duration;
+    if (current) frame = f * current.summary.frames;
+  },
+  setPlaying(p) {
+    if (detail.on) exitDetail({ resume: p });
+    else setPlaying(p);
+  },
+  setSpeed(x) {
+    $('speed').value = String(x);
+    $('speed').dispatchEvent(new Event('change'));
+  },
+  caption(text) {
+    if (text) $('show-caption').textContent = text;
+  },
+  onEnd() {
+    $('show-bar').hidden = true;
+    document.body.classList.remove('showing');
+    $('show-btn').hidden = false;
+    $('globe').focus();
+  },
+});
+
+if (import.meta.env.DEV) window.__show = show;
+
+function startShow() {
+  if (show.running) return;
+  $('show-caption').textContent = '';
+  $('show-bar').hidden = false;
+  $('show-btn').hidden = true;
+  document.body.classList.add('showing');
+  show.start(SHOW_SCRIPT);
+}
+$('show-btn').addEventListener('click', startShow);
+$('show-stop').addEventListener('click', () => show.stop());
+// Anyone taking over ends the show, leaving the planet where it is: a press anywhere
+// outside the caption bar and the mute button, or a key that steers.
+document.addEventListener('pointerdown', (e) => {
+  if (show.running && e.isTrusted && !e.target.closest('#show-bar, #mute')) show.stop();
+}, true);
+document.addEventListener('keydown', (e) => {
+  if (!show.running || !e.isTrusted) return;
+  if (e.key === 'Escape' || e.key.startsWith('Arrow') || '+=-_'.includes(e.key)) show.stop();
+}, true);
 
 // While the first dataset plays, quietly get the others ready: data (lightning's dots are
 // parsed in a worker), their dot buffers and still images uploaded to the GPU one at a
@@ -509,11 +573,13 @@ $('spin-left').addEventListener('click', () => globe.spinBy(0.35 / Math.sqrt(Mat
 $('spin-right').addEventListener('click', () => globe.spinBy(-0.35 / Math.sqrt(Math.max(1, globe.zoomFactor))));
 $('zoom-in').addEventListener('click', () => globe.zoomBy(1.6));
 $('zoom-out').addEventListener('click', () => globe.zoomBy(1 / 1.6));
-$('mute').addEventListener('click', (e) => {
-  const muted = e.currentTarget.getAttribute('aria-pressed') !== 'true';
-  e.currentTarget.setAttribute('aria-pressed', String(muted));
-  e.currentTarget.setAttribute('aria-label', muted ? 'Unmute' : 'Mute');
+function setMuted(muted) {
+  $('mute').setAttribute('aria-pressed', String(muted));
+  $('mute').setAttribute('aria-label', muted ? 'Unmute' : 'Mute');
   sound.setMuted(muted);
+}
+$('mute').addEventListener('click', (e) => {
+  setMuted(e.currentTarget.getAttribute('aria-pressed') !== 'true');
 });
 
 // Color legend for the current dataset (from datasets.js), hidden when it has none.
@@ -546,7 +612,7 @@ function onZoom(z) {
     detail.resumedZoomed = false;
     // Zoom paused playback for us -> resume. If the user paused, keep the sharp still.
     if (detail.on && detail.wasPlaying) exitDetail({ resume: true });
-  } else if (z >= inAt && z > 1.02 && !detail.on && !detail.resumedZoomed && current.hires && video && !fullResVideo()) {
+  } else if (z >= inAt && z > 1.02 && !detail.on && !detail.resumedZoomed && current.hires && video && !fullResVideo() && !show.running) {
     enterDetail();
   }
 }

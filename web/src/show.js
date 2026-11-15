@@ -1,0 +1,166 @@
+// The guided show: a narrated tour that teaches the sounds one at a time, then hands the
+// planet over. It plays a list of steps (show-script.js) using the app's own controls:
+//
+//   { dataset: 'sst' }            switch dataset (waits until it's on screen)
+//   { seek: 0.42 }                jump to this point of the timeline (0-1)
+//   { play: true, speed: 1 }      playback
+//   { focus: ['pad'] }            play only these sound layers (null = all; see sound.js)
+//   { fly: { lat, lon, zoom, seconds }, wait: false }   move the camera (waits unless wait: false)
+//   { say: 'ocean-1', text: '…' } a narration line (waits until it has been spoken)
+//   { pause: 1.5 }                wait this many seconds
+//
+// Narration: a recorded file web/public/show/voice/<id>.mp3 when there is one, otherwise
+// the browser's built-in voice reads the text (a stand-in until recordings exist).
+// Production builds list the recordings in show/voice/index.json (vite.config.js); in
+// development each file is looked up directly.
+//
+// The show stops the moment someone takes over (stop()): the planet stays where it is.
+
+const VOICE_DIR = 'show/voice';
+
+export class Show {
+  constructor(ctx) {
+    this.ctx = ctx; // { globe, sound, selectDataset(id), seek(f), setPlaying(b), setSpeed(x), caption(text|null), onEnd() }
+    this.running = false;
+    this.cancels = new Set();
+    this.recordings = null;
+  }
+
+  async start(steps) {
+    if (this.running) return;
+    this.running = true;
+    this.ctx.globe.held = true;
+    this.recordings = await this._recordings(steps);
+    try {
+      for (const step of steps) {
+        if (!this.running) break;
+        await this._step(step);
+      }
+    } catch (err) {
+      console.error('[show] stopped by an error', err);
+    } finally {
+      if (this.running) this.stop({ finished: true });
+    }
+  }
+
+  // Someone took over (or the show ended): leave everything as it is, sounds back to normal.
+  stop({ finished = false } = {}) {
+    if (!this.running) return;
+    this.running = false;
+    for (const cancel of this.cancels) cancel();
+    this.cancels.clear();
+    window.speechSynthesis?.cancel();
+    this.audio?.pause();
+    this.audio = null;
+    const { globe, sound } = this.ctx;
+    globe.held = false;
+    globe.idleFor = 0;
+    globe.cancelFlight();
+    sound.focus(null);
+    sound.duck(false);
+    this.ctx.caption(null);
+    this.ctx.onEnd?.({ finished });
+  }
+
+  async _step(s) {
+    const { ctx } = this;
+    if (s.dataset) await this._cancellable(ctx.selectDataset(s.dataset));
+    if (s.seek != null) ctx.seek(s.seek);
+    if (s.speed != null) ctx.setSpeed(s.speed);
+    if (s.play != null) ctx.setPlaying(s.play);
+    if (s.focus !== undefined) ctx.sound.focus(s.focus);
+    if (s.fly) {
+      const arrived = ctx.globe.flyTo(s.fly);
+      if (s.wait !== false) await this._cancellable(arrived);
+    }
+    if (s.say) await this._say(s.say, s.text);
+    if (s.pause) await this._sleep(s.pause);
+  }
+
+  // ---------- narration ----------
+  async _say(id, text) {
+    if (!this.running) return;
+    const { sound } = this.ctx;
+    this.ctx.caption(text);
+    sound.duck(true);
+    try {
+      if (sound.muted) await this._sleep(readingTime(text)); // captions still advance
+      else if (this.recordings.has(id)) await this._playFile(`${VOICE_DIR}/${id}.mp3`, text);
+      else await this._speak(text);
+    } finally {
+      if (this.running) sound.duck(false);
+    }
+    await this._sleep(0.5); // a breath between lines
+  }
+
+  _playFile(url, text) {
+    return this._cancellable(new Promise((resolve) => {
+      const a = new Audio(url);
+      this.audio = a;
+      a.onended = resolve;
+      a.onerror = () => this._speak(text).then(resolve); // missing or broken: fall back
+      a.play().catch(() => this._speak(text).then(resolve));
+    }));
+  }
+
+  // Stand-in voice. Some browsers never fire onend, so a time limit backs it up.
+  _speak(text) {
+    const synth = window.speechSynthesis;
+    if (!synth) return this._sleep(readingTime(text));
+    return this._cancellable(new Promise((resolve) => {
+      const u = new SpeechSynthesisUtterance(text);
+      u.voice = pickVoice();
+      u.rate = 1.0;
+      let done = false;
+      const finish = () => { if (!done) { done = true; resolve(); } };
+      u.onend = finish;
+      u.onerror = finish;
+      setTimeout(finish, (readingTime(text) + 4) * 1000);
+      synth.cancel();
+      synth.speak(u);
+    }));
+  }
+
+  // Which lines have recordings.
+  async _recordings(steps) {
+    const ids = steps.filter((s) => s.say).map((s) => s.say);
+    try {
+      const r = await fetch(`${VOICE_DIR}/index.json`);
+      if (r.ok) return new Set(await r.json());
+    } catch { /* no index: development */ }
+    const found = await Promise.all(ids.map((id) =>
+      fetch(`${VOICE_DIR}/${id}.mp3`, { method: 'HEAD' })
+        .then((r) => (r.ok && (r.headers.get('content-type') ?? '').startsWith('audio') ? id : null))
+        .catch(() => null)));
+    return new Set(found.filter(Boolean));
+  }
+
+  // ---------- waiting, cancellable by stop() ----------
+  _cancellable(promise) {
+    return new Promise((resolve) => {
+      const cancel = () => resolve();
+      this.cancels.add(cancel);
+      Promise.resolve(promise).then(resolve, resolve).finally(() => this.cancels.delete(cancel));
+    });
+  }
+
+  _sleep(seconds) {
+    return this._cancellable(new Promise((r) => setTimeout(r, seconds * 1000)));
+  }
+}
+
+// Roughly how long a line takes to say (2.6 words per second).
+function readingTime(text) {
+  return Math.max(1.5, text.split(/\s+/).length / 2.6);
+}
+
+let chosenVoice;
+function pickVoice() {
+  if (chosenVoice !== undefined) return chosenVoice;
+  const voices = window.speechSynthesis?.getVoices() ?? [];
+  const en = voices.filter((v) => v.lang?.startsWith('en'));
+  const preferred = ['Samantha', 'Google US English', 'Microsoft Aria', 'Daniel', 'Karen'];
+  chosenVoice = preferred.map((n) => en.find((v) => v.name.includes(n))).find(Boolean) ?? en[0] ?? null;
+  if (!voices.length) chosenVoice = undefined; // voices load late in some browsers: try again next line
+  return chosenVoice ?? null;
+}

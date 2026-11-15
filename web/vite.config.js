@@ -29,6 +29,7 @@ function excludeLocalOnly() {
       };
       walk(outDir);
       writeDataIndex(join(outDir, 'data'));
+      writeVoiceIndex(join(outDir, 'show', 'voice'));
     },
   };
 }
@@ -49,6 +50,15 @@ function writeDataIndex(dataDir) {
   }
   writeFileSync(join(dataDir, 'index.json'), JSON.stringify(index));
   console.log(`  wrote data/index.json (${ids.length} datasets)`);
+}
+
+// show/voice/index.json: which narration lines have recordings (<id>.mp3), so the guided
+// show doesn't probe for missing ones (404s on the live site).
+function writeVoiceIndex(dir) {
+  let ids = [];
+  try { ids = readdirSync(dir).filter((n) => n.endsWith('.mp3')).map((n) => n.slice(0, -4)); } catch { /* none yet */ }
+  try { writeFileSync(join(dir, 'index.json'), JSON.stringify(ids)); } catch { return; }
+  console.log(`  wrote show/voice/index.json (${ids.length} recordings)`);
 }
 
 // Relative base so the build works on GitHub Pages (/repo-name/) and Netlify alike.
