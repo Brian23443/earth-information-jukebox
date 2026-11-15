@@ -181,6 +181,7 @@ const show = new Show({
     if (video) video.playbackRate = speed;
     $('show-bar').hidden = true;
     document.body.classList.remove('showing');
+    lockForShow(false);
     $('show-btn').hidden = false;
     $('globe').focus();
   },
@@ -207,18 +208,21 @@ function startShow() {
   $('show-bar').hidden = false;
   $('show-btn').hidden = true;
   document.body.classList.add('showing');
+  lockForShow(true);
   show.start(SHOW_SCRIPT);
 }
 $('show-btn').addEventListener('click', startShow);
 $('show-stop').addEventListener('click', () => show.stop());
-// Anyone taking over ends the show, leaving the planet where it is: a press anywhere
-// outside the caption bar and the mute button, or a key that steers.
-document.addEventListener('pointerdown', (e) => {
-  if (show.running && e.isTrusted && !e.target.closest('#show-bar, #mute')) show.stop();
-}, true);
+// During the show you can still look around (drag, zoom, the spin and zoom buttons, arrow
+// keys); the globe eases back to the show when you let go (globe.js, showView). Dataset
+// tabs and the timeline are locked so the narration and the data stay together. Esc or
+// "Explore on my own" ends the show, leaving the planet where it is.
+const SHOW_LOCKED = ['shelf', 'play', 'scrub', 'speed'];
+function lockForShow(on) {
+  for (const id of SHOW_LOCKED) $(id).inert = on;
+}
 document.addEventListener('keydown', (e) => {
-  if (!show.running || !e.isTrusted) return;
-  if (e.key === 'Escape' || e.key.startsWith('Arrow') || '+=-_'.includes(e.key)) show.stop();
+  if (show.running && e.isTrusted && e.key === 'Escape') show.stop();
 }, true);
 
 // While the first dataset plays, quietly get the others ready: data (lightning's dots are

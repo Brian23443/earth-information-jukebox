@@ -92,7 +92,7 @@ export class Globe {
     this.cover = null;
     this.swapStyle = 'bloom';
     this.flight = null;
-    this.held = false; // true during the guided show: no auto-spin
+    this.held = false; // true during the guided show (see the held setter)
     this.eventSets = new Set(); // lightning dot buffers, kept between switches
     this.eventPoints = null;
     this.atmosphere = this._makeAtmosphere();
@@ -567,12 +567,15 @@ vec4 sampleSmooth(sampler2D tex, vec2 uv) {
   spinBy(rad) {
     this.spin += rad;
     this.idleFor = 0;
+    this.userAt = performance.now();
     this._apply();
   }
 
   tiltBy(rad) {
-    this.tilt = Math.max(-MAX_TILT, Math.min(MAX_TILT, this.tilt + rad));
+    const limit = this.held ? SHOW_MAX_TILT : MAX_TILT; // during the show, the poles too
+    this.tilt = Math.max(-limit, Math.min(limit, this.tilt + rad));
     this.idleFor = 0;
+    this.userAt = performance.now();
     this._apply();
   }
 
@@ -581,6 +584,7 @@ vec4 sampleSmooth(sampler2D tex, vec2 uv) {
     const surface = (this.targetDistance - 1) / factor;
     this.targetDistance = Math.max(this.minDistance, Math.min(this.maxDistance, 1 + surface));
     this.idleFor = 0;
+    this.userAt = performance.now();
   }
 
   update(dt) {
@@ -600,13 +604,14 @@ vec4 sampleSmooth(sampler2D tex, vec2 uv) {
         // after each move), so it never looks frozen while the narrator talks.
         if (!this.flight) {
           this.driftFor = (this.driftFor ?? 0) + dt;
-          this.spin += SHOW_DRIFT * Math.min(1, this.driftFor / 1.5) * dt;
+          this.showView.spin += SHOW_DRIFT * Math.min(1, this.driftFor / 1.5) * dt;
         } else this.driftFor = 0;
       } else if (this.idleFor > 4 && this.zoomFactor < 1.2) {
         const ease = Math.min(1, (this.idleFor - 4) / 2);
         this.spin += this.autoSpin * ease * dt;
       }
     }
+    if (this.held) this._followShow(dt);
     // Smooth zoom toward the target (the cover animation drives the distance itself)
     const prev = this.distance;
     if (this.cover) this.distance = this.targetDistance;
@@ -624,13 +629,63 @@ vec4 sampleSmooth(sampler2D tex, vec2 uv) {
   }
 
   // ---------- Guided show ----------
+  // While the show runs (held), it steers its own camera track, showView: flights and the
+  // gentle drift move that. The real camera follows it exactly, until someone drags, zooms
+  // or steers with the keys: then they're free to look around while the track carries on,
+  // and once they let go the camera eases back to wherever the show is by then.
+  get held() {
+    return this._held;
+  }
+
+  set held(on) {
+    this._held = on;
+    this.showView = on ? { spin: this.spin, tilt: this.tilt, distance: this.targetDistance } : null;
+    this.peeking = false;
+  }
+
+  _followShow(dt) {
+    const sv = this.showView;
+    const turn = 2 * Math.PI;
+    let ds = sv.spin - this.spin;
+    ds -= Math.round(ds / turn) * turn; // the short way round
+    const active = this.dragging || this.keysHeld.size > 0 || this.keySpinVel || this.keyTiltVel
+      || Math.abs(this.spinVel) > 0.02 || performance.now() - (this.userAt ?? -1e9) < 500;
+    if (active) {
+      this.peeking = true;
+      this.peekOffset = null;
+      return;
+    }
+    if (this.peeking) {
+      // Ease back (about a second): the camera rides on the moving track plus an offset
+      // (where the person left it) that shrinks to nothing, so it lands exactly on the
+      // track instead of trailing behind its drift.
+      const o = (this.peekOffset ??= { spin: -ds, tilt: this.tilt - sv.tilt, distance: this.targetDistance - sv.distance });
+      const keep = Math.exp(-dt * 3);
+      o.spin *= keep;
+      o.tilt *= keep;
+      o.distance *= keep;
+      this.spin += ds + o.spin;
+      this.tilt = sv.tilt + o.tilt;
+      this.targetDistance = sv.distance + o.distance;
+      if (Math.abs(o.spin) < 0.001 && Math.abs(o.tilt) < 0.001 && Math.abs(o.distance) < 0.003) {
+        this.peeking = false;
+        this.peekOffset = null;
+      }
+      return;
+    }
+    this.spin += ds;
+    this.tilt = sv.tilt;
+    this.targetDistance = sv.distance;
+  }
+
   // Turn so (lat, lon) faces the viewer, at a zoom factor (1 = default view), over `seconds`.
   // Latitude is limited by the tilt clamp (±30°). Resolves on arrival.
   flyTo({ lat = 15, lon = 0, zoom = 1, seconds = 2.5 } = {}) {
     // spin = 90° - (lon + 180°) puts lon in front (see latLonToLocal); tilt = lat.
+    const view = this.showView ?? this; // during the show, its own camera track
     let spin = (90 - (lon + 180)) * DEG;
     const turn = 2 * Math.PI;
-    spin += Math.round((this.spin - spin) / turn) * turn; // the short way round
+    spin += Math.round((view.spin - spin) / turn) * turn; // the short way round
     // The show may look at the poles (the temperature sweep); exploring stays within ±30°.
     const limit = this.held ? SHOW_MAX_TILT : MAX_TILT;
     const tilt = Math.max(-limit, Math.min(limit, lat * DEG));
@@ -640,8 +695,8 @@ vec4 sampleSmooth(sampler2D tex, vec2 uv) {
     this.flight?.resolve();
     return new Promise((resolve) => {
       this.flight = {
-        t: 0, seconds: Math.max(0.01, seconds), resolve,
-        from: { spin: this.spin, tilt: this.tilt, distance: this.targetDistance },
+        t: 0, seconds: Math.max(0.01, seconds), resolve, view: this.showView,
+        from: { spin: view.spin, tilt: view.tilt, distance: view === this ? this.targetDistance : view.distance },
         to: { spin, tilt, distance },
       };
     });
@@ -672,9 +727,11 @@ vec4 sampleSmooth(sampler2D tex, vec2 uv) {
     if (!f) return;
     f.t = Math.min(1, f.t + dt / f.seconds);
     const e = f.t < 0.5 ? 4 * f.t ** 3 : 1 - Math.pow(-2 * f.t + 2, 3) / 2;
-    this.spin = f.from.spin + (f.to.spin - f.from.spin) * e;
-    this.tilt = f.from.tilt + (f.to.tilt - f.from.tilt) * e;
-    this.targetDistance = f.from.distance + (f.to.distance - f.from.distance) * e;
+    const spin = f.from.spin + (f.to.spin - f.from.spin) * e;
+    const tilt = f.from.tilt + (f.to.tilt - f.from.tilt) * e;
+    const distance = f.from.distance + (f.to.distance - f.from.distance) * e;
+    if (f.view) Object.assign(f.view, { spin, tilt, distance }); // the show's track
+    else Object.assign(this, { spin, tilt, targetDistance: distance });
     this.idleFor = 0;
     if (f.t >= 1) {
       this.flight = null;
@@ -1016,7 +1073,7 @@ vec4 sampleSmooth(sampler2D tex, vec2 uv) {
     };
     this.keySpinVel = ramp(this.keySpinVel, held('ArrowLeft') - held('ArrowRight'), KEY_SPIN_MAX / z);
     this.keyTiltVel = ramp(this.keyTiltVel, held('ArrowUp') - held('ArrowDown'), KEY_TILT_MAX / z);
-    if (this.keySpinVel) { this.spin += this.keySpinVel * dt; this.idleFor = 0; }
+    if (this.keySpinVel) { this.spin += this.keySpinVel * dt; this.idleFor = 0; this.userAt = performance.now(); }
     if (this.keyTiltVel) this.tiltBy(this.keyTiltVel * dt);
   }
 
