@@ -796,8 +796,25 @@ let last = performance.now();
 let featureClock = 0;
 let renderFps = 0;
 
+// Audio bars in the player: a calm height for steady sound plus a jump on every new note,
+// hit or syllable (the level above its own recent average), rising fast and falling back.
+const eqBars = [...document.querySelectorAll('#eq span')];
+const eqLevels = eqBars.map(() => 0);
+const eqAvg = eqBars.map(() => 0);
+function updateEq(dt) {
+  if (!sound || $('app').hidden) return;
+  const raw = sound.muted ? eqBars.map(() => 0) : sound.levels(eqBars.length);
+  eqBars.forEach((bar, i) => {
+    eqAvg[i] += (raw[i] - eqAvg[i]) * (1 - Math.exp(-dt / 0.6));
+    const t = Math.min(1, raw[i] * 0.45 + Math.max(0, raw[i] - eqAvg[i]) * 3);
+    eqLevels[i] = t > eqLevels[i] ? t : Math.max(t, eqLevels[i] - dt * 2.6);
+    bar.style.transform = `scaleY(${(0.12 + 0.88 * (reducedMotion ? 0 : eqLevels[i])).toFixed(3)})`;
+  });
+}
+
 function tick(now) {
   const dt = Math.min(0.1, (now - last) / 1000);
+  updateEq(dt);
   if (now > last) renderFps = renderFps * 0.95 + (1000 / (now - last)) * 0.05;
   last = now;
 

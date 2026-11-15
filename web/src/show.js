@@ -129,6 +129,7 @@ export class Show {
     return this._cancellable(new Promise((resolve) => {
       const a = new Audio(url);
       this.audio = a;
+      try { this.ctx.sound.attachVoice(a); } catch { /* bars just won't show the voice */ }
       a.onended = resolve;
       a.onerror = () => this._speak(text).then(resolve); // missing or broken: fall back
       a.play().catch(() => this._speak(text).then(resolve));

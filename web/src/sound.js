@@ -44,6 +44,9 @@ if (import.meta.env.DEV) window.__Tone = Tone; // for level checks in the browse
 export class SoundEngine {
   constructor() {
     this.master = new Tone.Volume(MASTER_DB).toDestination();
+    // What the audio bars in the player read: everything that plays (after mute).
+    this.analyser = new Tone.FFT({ size: 512, smoothing: 0.55 });
+    this.master.connect(this.analyser);
     this.limiter = new Tone.Limiter(-1).connect(this.master);
     // A shared room: a touch of reverb on every data layer makes them sit together instead
     // of sounding like separate beeps. (The cursor stays dry, so its pitch reads clearly.)
@@ -216,6 +219,38 @@ export class SoundEngine {
 
   get muted() {
     return this.master.mute;
+  }
+
+  // n levels (0-1), low to high frequency in equal musical steps (60 Hz - 6 kHz), for the
+  // player's audio bars.
+  levels(n = 5) {
+    const bins = this.analyser.getValue(); // dB per bin, 0 to Nyquist
+    const nyquist = Tone.getContext().sampleRate / 2;
+    const out = [];
+    for (let i = 0; i < n; i++) {
+      const f0 = 60 * Math.pow(100, i / n), f1 = 60 * Math.pow(100, (i + 1) / n);
+      const b0 = Math.max(1, Math.floor((f0 / nyquist) * bins.length));
+      const b1 = Math.max(b0 + 1, Math.ceil((f1 / nyquist) * bins.length));
+      let peak = -Infinity;
+      for (let b = b0; b < b1 && b < bins.length; b++) peak = Math.max(peak, bins[b]);
+      out.push(Math.max(0, Math.min(1, (peak + 90) / 60))); // -90 dB silent .. -30 dB full
+    }
+    return out;
+  }
+
+  // The narrator plays through an <audio> element; route it past the analyser too, so the
+  // bars move with the voice. (Straight to the speakers: not ducked, muted or reverbed.)
+  attachVoice(el) {
+    if (el.__tapped) return;
+    el.__tapped = true;
+    const ctx = Tone.getContext().rawContext;
+    const src = ctx.createMediaElementSource(el);
+    src.connect(ctx.destination);
+    if (!this.voiceTap) {
+      this.voiceTap = new Tone.Gain(1);
+      this.voiceTap.connect(this.analyser);
+    }
+    Tone.connect(src, this.voiceTap);
   }
 
   // Play only these layers (names above), lifted so they carry on their own; null brings

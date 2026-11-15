@@ -113,7 +113,7 @@
           <div id="credit" class="credit"></div>
         </div>
 
-        <div class="player glass" role="group" aria-label="Playback">
+        <div class="player" role="group" aria-label="Playback">
           <button id="play" class="icon-btn play-btn" type="button" aria-label="Pause" aria-pressed="true">
             <svg class="i-pause" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14M16 5v14" /></svg>
             <svg class="i-play" viewBox="0 0 24 24" aria-hidden="true"><path class="fill" d="M8 5.5v13l11-6.5z" /></svg>
@@ -133,6 +133,8 @@
               <option value="2">2×</option>
             </select>
           </label>
+          <!-- Bounces with what's playing (data sounds and narrator); decorative. -->
+          <div id="eq" class="eq" aria-hidden="true"><span></span><span></span><span></span><span></span><span></span></div>
           <button id="mute" class="icon-btn" type="button" aria-label="Mute" aria-pressed="false" title="Mute">
             <svg class="i-sound" viewBox="0 0 24 24" aria-hidden="true"><path class="fill" d="M4 9h4l5-4v14l-5-4H4z" /><path d="M16.5 8.5a5 5 0 0 1 0 7M19 6a8.5 8.5 0 0 1 0 12" /></svg>
             <svg class="i-muted" viewBox="0 0 24 24" aria-hidden="true"><path class="fill" d="M4 9h4l5-4v14l-5-4H4z" /><path d="M17 9l5 6M22 9l-5 6" /></svg>
