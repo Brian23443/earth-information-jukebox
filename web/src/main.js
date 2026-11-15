@@ -133,9 +133,9 @@ const show = new Show({
   get globe() { return globe; },
   get sound() { return sound; },
   // Resolves true if it switched (false: that dataset was already on screen).
-  async selectDataset(id) {
+  async selectDataset(id, startAt = 0) {
     if (current?.ds.id === id) return false;
-    await selectDataset(DATASETS.find((d) => d.id === id));
+    await selectDataset(DATASETS.find((d) => d.id === id), { startAt });
     return true;
   },
   seek(f) {
@@ -352,7 +352,16 @@ function makeVideo(url) {
 async function useVideo(url, res, { syncFrom = null, swap = null } = {}) {
   const v = makeVideo(url);
   if (swap) {
-    if (v.readyState < 2) await Promise.race([once(v, 'loadeddata'), new Promise((r) => setTimeout(r, 6000))]);
+    const timeout = (ms) => new Promise((r) => setTimeout(r, ms));
+    if (swap.startAt > 0) {
+      // Open at the requested moment: seek before the first picture is shown.
+      if (v.readyState < 1) await Promise.race([once(v, 'loadedmetadata'), timeout(6000)]);
+      if (v.duration) {
+        v.currentTime = swap.startAt * v.duration;
+        await Promise.race([once(v, 'seeked'), timeout(6000)]);
+      }
+    }
+    if (v.readyState < 2) await Promise.race([once(v, 'loadeddata'), timeout(6000)]);
     if (swap.token !== switchToken) { v.removeAttribute('src'); v.load(); return false; }
   }
   if (syncFrom) {
@@ -467,7 +476,9 @@ function watchStalls(v) {
 // The globe keeps showing the old dataset until the new one's first picture is ready, then
 // the new one sweeps across (globe.swapFrom) and lightning dots fade in or out.
 let switchToken = 0;
-async function selectDataset(ds) {
+// startAt: where on the timeline (0-1) the new dataset should open, already there when it
+// first appears (the guided show uses this so nothing jumps during the transition).
+async function selectDataset(ds, { startAt = 0 } = {}) {
   const token = ++switchToken;
   for (const b of $('shelf').children) b.setAttribute('aria-pressed', String(b.dataset.id === ds.id));
   if (current) sound.chime(); // a soft cue that the data is changing (not on the very first load)
@@ -480,7 +491,8 @@ async function selectDataset(ds) {
   exitDetail({ resume: false });
   current = loaded;
   extractor = new FeatureExtractor(loaded.summary);
-  frame = 0;
+  frame = startAt * loaded.summary.frames;
+  $('scrub').value = String(Math.round(startAt * 1000));
 
   // The old picture stays put (paused on its last frame) until the new one replaces it.
   const prev = globe.material.map;
@@ -515,7 +527,7 @@ async function selectDataset(ds) {
     globe.swapFrom(prev, retire);
     if (globe.zoomFactor > NIGHT_8K_ZOOM) sharpenNight(ev);
   } else if (loaded.videoUrl) {
-    const swap = { token, prev, done: retire };
+    const swap = { token, prev, done: retire, startAt };
     if (params.get('video') === '6840' && (await canPlayFull(loaded))) {
       await useVideo(loaded.videoUrlMax, 6840, { swap }); // demo-recording mode: full resolution throughout
       quality.note = 'forced 6840 (HEVC)';

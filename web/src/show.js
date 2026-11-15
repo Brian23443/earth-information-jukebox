@@ -69,14 +69,13 @@ export class Show {
 
   async _step(s) {
     const { ctx } = this;
+    // A new dataset opens already at its moment (seek), so nothing jumps. If the dataset
+    // was already showing, the timeline glides there instead (see reach, below).
     let switched = false;
-    if (s.dataset) switched = await this._cancellable(ctx.selectDataset(s.dataset)); // (chimes, in main.js)
-    // A seek only right after a dataset switch, where the transition hides it. If the
-    // dataset was already showing, glide there instead (see reach, below).
+    if (s.dataset) switched = await this._cancellable(ctx.selectDataset(s.dataset, s.seek ?? 0)); // (chimes, in main.js)
     let reach = s.reach, then = s.then;
-    if (s.seek != null) {
-      if (switched || !s.dataset) ctx.seek(s.seek);
-      else { reach = s.seek; then = s.speed; }
+    if (s.seek != null && !switched) {
+      if (s.dataset) { reach = s.seek; then = s.speed; } else ctx.seek(s.seek);
     }
     if (s.speed != null && reach == null) ctx.setSpeed(s.speed);
     if (s.play != null) ctx.setPlaying(s.play);
